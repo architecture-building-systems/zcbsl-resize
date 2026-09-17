@@ -26,22 +26,27 @@ Thermal mass is parametric rather than a fixed light/medium/heavy category,
 because the lab is experimenting with different interior mass materials
 (rammed earth at present).
 
-Ramp time, setpoint range and facade construction are workshop-exploration
-variables, not fixed inputs. That is the whole reason every input is a slider.
+Ramp time, setpoint range, window-to-wall ratio and facade construction are
+workshop-exploration variables, not fixed inputs. That is the whole reason every input is a slider.
 
 ## Boundary conditions
 
 - The facade's far side is an emulated extreme climate, a real driving load.
-  Facade U-value, glazing U-value, glazing fraction, SHGC and boundary
+  Facade U-value, glazing U-value, window-to-wall ratio, SHGC and boundary
   temperature are all real, swappable variables.
+- The facade is **the whole of the longest wall**, not a strip of it. The
+  window-to-wall ratio splits that wall into glazed and opaque; there is no
+  separate facade-width input.
 - The ceiling is also a real boundary and sees **the same emulated climate** as
   the facade. It gets its own U-value but not its own temperatures.
-- Only the floor and the walls that are not the facade are treated as
+- Only the floor and the three walls that are not the facade are treated as
   adiabatic, and even they carry a small residual U-value against the
   surrounding lab, since no real assembly is perfectly adiabatic.
 
-At the default geometry the ceiling is the single largest conducting surface,
-larger than the whole facade. Worth confirming what is actually above it.
+At the default geometry the ceiling, at 12.0 m², is still marginally the
+largest single conducting surface — the 10.8 m² facade only overtakes it once
+the chamber is longer than it is wide by more than the ceiling's own area.
+Worth confirming what is actually above it.
 
 ## Modelling assumptions
 
@@ -80,7 +85,7 @@ ramp requirement to the room, and no buffer tank changes that.
 The **heat-pump peak** can be much smaller, because the Pufferspeicher absorbs
 the ramp surge. At defaults the 1000 L / 15 K buffer covers the whole ramp, so
 the heat pump only needs the steady hold plus its own recharge duty — about
-5.3 kW against a 9.6 kW air-side figure.
+5.4 kW against a 9.8 kW air-side figure.
 
 ## Open items
 

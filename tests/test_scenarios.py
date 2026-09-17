@@ -1,9 +1,12 @@
 """Scenario engine: shapes, correctness against scalar calls, and guard rails."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from zcbsl_resize import ChamberParams, compute, save_scenario
+from zcbsl_resize.params import load_scenario
 from zcbsl_resize.scenarios import (
     evaluate,
     grid_sweep,
@@ -117,3 +120,15 @@ def test_lumped_mode_is_carried_through_the_sweep():
     limited = grid_sweep(ChamberParams(added_mass_area=20.0), {"ramp_minutes": [30]})
     lumped = grid_sweep(ChamberParams(added_mass_area=20.0), {"ramp_minutes": [30]}, lumped_mass=True)
     assert lumped["power_mass"].iloc[0] > limited["power_mass"].iloc[0]
+
+
+SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
+
+
+@pytest.mark.parametrize("path", sorted(SCENARIO_DIR.glob("*.json")), ids=lambda p: p.name)
+def test_shipped_scenario_files_still_load(path):
+    """``from_dict`` is strict, so a renamed parameter breaks these files silently
+    until something actually opens them. Something now does."""
+    scenario = load_scenario(path)
+    assert scenario["params"].validate() == []
+    assert compute(scenario["params"])["heating_design"] > 0

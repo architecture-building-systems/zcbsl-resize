@@ -20,11 +20,118 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
     });
   }
+  var infoSeq = 0;
   function infoIcon(tooltip) {
     if (!tooltip) return "";
-    return ' <button type="button" class="info-icon" tabindex="0" aria-label="What this means">' +
+    var id = "tip-src-" + (++infoSeq);
+    return ' <button type="button" class="info-icon" aria-label="What this means"' +
+      ' aria-expanded="false" aria-describedby="' + id + '">' +
       '<span aria-hidden="true">i</span>' +
-      '<span class="info-tooltip" role="tooltip">' + tooltip + "</span></button>";
+      '<span class="info-tooltip" id="' + id + '" role="tooltip">' + tooltip + "</span></button>";
+  }
+
+  // ------------------------------------------------------------- info tooltip
+  // One floating bubble parented to <body>. The cards set overflow:hidden and
+  // every section is replaced wholesale on each compute, so neither the
+  // placement nor the dismissal of these can be left to CSS :hover inside a card.
+
+  var TIP_GAP = 8;
+  var tipLayer = null;
+  var tipIcon = null;
+  var tipPinned = false;
+
+  function closestIcon(node) {
+    return node && node.closest ? node.closest(".info-icon") : null;
+  }
+
+  function hideTip() {
+    tipPinned = false;
+    if (tipIcon) {
+      tipIcon.setAttribute("aria-expanded", "false");
+      tipIcon = null;
+    }
+    if (tipLayer) tipLayer.classList.remove("is-visible");
+  }
+
+  function positionTip() {
+    if (!tipIcon || !tipIcon.isConnected) { hideTip(); return; }
+    var r = tipIcon.getBoundingClientRect();
+    var w = tipLayer.offsetWidth, h = tipLayer.offsetHeight;
+    var below = r.top - h - TIP_GAP < TIP_GAP;
+    var top = below ? r.bottom + TIP_GAP : r.top - h - TIP_GAP;
+    var left = r.left + r.width / 2 - w / 2;
+    left = Math.max(TIP_GAP, Math.min(left, window.innerWidth - w - TIP_GAP));
+    var arrow = Math.min(Math.max(r.left + r.width / 2 - left, 12), Math.max(w - 12, 12));
+    tipLayer.classList.toggle("below", below);
+    tipLayer.style.top = Math.round(top) + "px";
+    tipLayer.style.left = Math.round(left) + "px";
+    tipLayer.style.setProperty("--tip-arrow", Math.round(arrow) + "px");
+  }
+
+  function showTip(icon) {
+    if (!tipLayer || !icon || !icon.isConnected) return false;
+    var source = icon.querySelector(".info-tooltip");
+    var text = source ? source.textContent : "";
+    if (!text) return false;
+    if (tipIcon && tipIcon !== icon) tipIcon.setAttribute("aria-expanded", "false");
+    tipIcon = icon;
+    tipLayer.textContent = text;
+    tipLayer.classList.add("is-visible");
+    positionTip();
+    return true;
+  }
+
+  function wireTooltips() {
+    tipLayer = el("tip-layer");
+    if (!tipLayer) return;
+
+    document.addEventListener("pointerover", function (event) {
+      if (tipPinned) return;
+      var icon = closestIcon(event.target);
+      if (icon) showTip(icon);
+    });
+
+    document.addEventListener("pointerout", function (event) {
+      if (tipPinned) return;
+      var icon = closestIcon(event.target);
+      if (icon && icon === tipIcon && !icon.contains(event.relatedTarget)) hideTip();
+    });
+
+    document.addEventListener("click", function (event) {
+      var icon = closestIcon(event.target);
+      if (!icon) return;
+      if (tipPinned && icon === tipIcon) { hideTip(); return; }
+      if (!showTip(icon)) return;
+      tipPinned = true;
+      icon.setAttribute("aria-expanded", "true");
+    });
+
+    // Tapping or clicking anywhere else always lets go, including on touch,
+    // where there is no pointerout to rely on.
+    document.addEventListener("pointerdown", function (event) {
+      if (!closestIcon(event.target)) hideTip();
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && tipIcon) hideTip();
+    });
+
+    document.addEventListener("focusin", function (event) {
+      var icon = closestIcon(event.target);
+      if (!icon) { if (!tipPinned) hideTip(); return; }
+      // Only keyboard focus shows it; a mouse click is handled as a pin above.
+      if (icon.matches(":focus-visible")) showTip(icon);
+    });
+
+    document.addEventListener("focusout", function (event) {
+      if (tipPinned) return;
+      var icon = closestIcon(event.target);
+      if (icon && icon === tipIcon) hideTip();
+    });
+
+    // Fixed coordinates go stale the moment either of these fires.
+    window.addEventListener("scroll", hideTip, true);
+    window.addEventListener("resize", hideTip);
   }
 
   // ---------------------------------------------------------------- controls
@@ -389,6 +496,7 @@
   }
 
   function render(data) {
+    hideTip();
     renderStats(data.results);
     renderInsights(data);
     renderSensitivity(data);
@@ -404,7 +512,7 @@
     return [
       "Chamber ramp & hold sizing",
       "Room: " + fmt(state.length, 1) + " x " + fmt(state.width, 1) + " x " + fmt(state.height, 1) +
-        " m; facade " + fmt(r.facade_area, 1) + " m2 (" + fmt(state.glazing_fraction, 0) + "% glazed)",
+        " m; facade " + fmt(r.facade_area, 1) + " m2 (" + fmt(state.wwr, 0) + "% WWR)",
       "Setpoints " + fmt(r.setpoint_min, 1) + " to " + fmt(r.setpoint_max, 1) + " C, ramp " + fmt(r.ramp_minutes, 0) + " min",
       "Heating design (AHU): " + kW(r.heating_design) + " kW (hold " + kW(r.heating_hold) + " + ramp " + kW(r.power_mass) + ", incl. " + fmt(state.margin_pct, 0) + "% margin)",
       "Cooling design (AHU): " + kW(r.cooling_design) + " kW (hold " + kW(r.cooling_hold) + " + ramp " + kW(r.power_mass) + ")",
@@ -494,6 +602,8 @@
   }
 
   // ---------------------------------------------------------------- start
+
+  wireTooltips();
 
   fetch("/api/schema")
     .then(function (res) { return res.json(); })

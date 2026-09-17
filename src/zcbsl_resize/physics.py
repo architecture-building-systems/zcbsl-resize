@@ -83,8 +83,9 @@ def compute(
     volume = length * width * height
     floor_area = length * width
     interior_area = 2.0 * (length * width + length * height + width * height)
-    facade_area = np.minimum(p["facade_width"], np.maximum(length, width)) * height
-    glazing_area = facade_area * np.clip(p["glazing_fraction"], 0.0, 100.0) / 100.0
+    # The facade is the whole of the longest wall; WWR splits it into glass and opaque.
+    facade_area = np.maximum(length, width) * height
+    glazing_area = facade_area * np.clip(p["wwr"], 0.0, 100.0) / 100.0
     opaque_facade_area = np.maximum(facade_area - glazing_area, 0.0)
     ceiling_area = floor_area
     # Floor and the walls that are not the facade: the only nominally adiabatic ones.

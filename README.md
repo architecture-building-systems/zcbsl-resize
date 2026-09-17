@@ -130,7 +130,9 @@ numbers here differ from it deliberately:
 
 - Thermal mass is diffusion-limited rather than fully lumped. For thick, dense
   layers the old tool overstated the ramp requirement by roughly 6×.
-- The facade has separate opaque and glazing U-values.
+- The facade has separate opaque and glazing U-values, and covers the whole
+  of the longest wall, split by a window-to-wall ratio rather than by a
+  separate facade-width input.
 - The ceiling shares the facade's emulated climate instead of having its own
   boundary temperatures.
 - Equipment gains are per square metre of floor, up to 500 W/m².

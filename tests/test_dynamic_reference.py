@@ -17,8 +17,8 @@ from zcbsl_resize.physics import CP_AIR, RHO_AIR
 
 def envelope_ua(p: ChamberParams) -> float:
     """Total conductance to the outside, W/K, rebuilt from the parameters."""
-    facade_area = min(p.facade_width, max(p.length, p.width)) * p.height
-    glazing_area = facade_area * p.glazing_fraction / 100.0
+    facade_area = max(p.length, p.width) * p.height
+    glazing_area = facade_area * p.wwr / 100.0
     opaque_area = facade_area - glazing_area
     ceiling_area = p.length * p.width
     return (
@@ -30,7 +30,7 @@ def envelope_ua(p: ChamberParams) -> float:
 
 def residual_ua(p: ChamberParams) -> float:
     interior = 2.0 * (p.length * p.width + p.length * p.height + p.width * p.height)
-    facade_area = min(p.facade_width, max(p.length, p.width)) * p.height
+    facade_area = max(p.length, p.width) * p.height
     residual_area = interior - facade_area - p.length * p.width
     return p.residual_u * residual_area
 

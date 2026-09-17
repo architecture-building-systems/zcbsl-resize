@@ -4,7 +4,7 @@ Everything below is reproducible: `PYTHONPATH=src python -m pytest tests -q`.
 The hand calculations use the shipped defaults, so you can check them with a
 calculator and nothing else.
 
-Default case: 4.0 × 3.0 × 2.7 m chamber, 3.0 m wide facade at 30% glazing,
+Default case: 4.0 × 3.0 × 2.7 m chamber, the 4.0 m wall glazed at 30% WWR,
 setpoints 16–30 °C, 30-minute ramp, 3 ACH at 21 °C / 60% RH, 2 occupants,
 25 W/m² equipment, 15% margin, Zurich pressure 96 500 Pa.
 
@@ -14,11 +14,15 @@ setpoints 16–30 °C, 30-minute ramp, 3 ACH at 21 °C / 60% RH, 2 occupants,
 | --- | --- | --- |
 | Volume | 4.0 × 3.0 × 2.7 | 32.4 m³ |
 | Interior surface | 2 × (12.0 + 10.8 + 8.1) | 61.8 m² |
-| Facade | 3.0 × 2.7 | 8.10 m² |
-| — glazed | 8.10 × 0.30 | 2.43 m² |
-| — opaque | 8.10 × 0.70 | 5.67 m² |
+| Facade (the whole longest wall) | 4.0 × 2.7 | 10.80 m² |
+| — glazed | 10.80 × 0.30 | 3.24 m² |
+| — opaque | 10.80 × 0.70 | 7.56 m² |
 | Ceiling | 4.0 × 3.0 | 12.0 m² |
-| Residual adiabatic | 61.8 − 8.1 − 12.0 | 41.7 m² |
+| Residual adiabatic | 61.8 − 10.8 − 12.0 | 39.0 m² |
+
+The facade occupies the entire longest wall; the window-to-wall ratio splits
+that wall into glass and opaque, and only the floor and the other three walls
+are left in the adiabatic residual.
 
 ## 2. Steady-state heating hold
 
@@ -27,19 +31,21 @@ so ΔT = 40 K. Solar is ignored in the heating case, which is conservative.
 
 | Term | By hand | W |
 | --- | --- | --- |
-| Opaque facade | 1.20 × 5.67 × 40 | 272.2 |
-| Glazed facade | 1.40 × 2.43 × 40 | 136.1 |
+| Opaque facade | 1.20 × 7.56 × 40 | 362.9 |
+| Glazed facade | 1.40 × 3.24 × 40 | 181.4 |
 | Ceiling | 1.20 × 12.0 × 40 | 576.0 |
-| Residual surfaces | 0.05 × 41.7 × (30 − 21) | 18.8 |
+| Residual surfaces | 0.05 × 39.0 × (30 − 21) | 17.6 |
 | Ventilation | (3 × 32.4 × 1.2 / 3600) × 1005 × (30 − 21) | 293.1 |
 | Internal gains | −(2 × 75 + 25 × 12) | −450.0 |
-| **Hold** | | **846.1** |
+| **Hold** | | **980.9** |
 
-The model returns 846.063 W.
+The model returns 980.928 W.
 
-Note what dominates: the ceiling, at 576 W, is more than the whole facade. It
-is the largest single surface facing the emulated climate, and it has the same
-U-value. Worth a look during the workshop.
+Note what dominates: the ceiling, at 576 W, is still marginally more than the
+whole facade at 544 W, despite the facade now covering an entire wall. It is a
+single surface facing the emulated climate with the same U-value as the opaque
+facade, and nothing in the brief says it has to be. Worth a look during the
+workshop.
 
 ## 3. Steady-state cooling hold
 
@@ -48,17 +54,19 @@ with solar included.
 
 | Term | By hand | W |
 | --- | --- | --- |
-| Opaque facade | 1.20 × 5.67 × 19 | 129.3 |
-| Glazed facade | 1.40 × 2.43 × 19 | 64.6 |
+| Opaque facade | 1.20 × 7.56 × 19 | 172.4 |
+| Glazed facade | 1.40 × 3.24 × 19 | 86.2 |
 | Ceiling | 1.20 × 12.0 × 19 | 273.6 |
-| Solar through glazing | 0.50 × 2.43 × 700 | 850.5 |
-| Residual surfaces | 0.05 × 41.7 × (21 − 16) | 10.4 |
+| Solar through glazing | 0.50 × 3.24 × 700 | 1 134.0 |
+| Residual surfaces | 0.05 × 39.0 × (21 − 16) | 9.8 |
 | Ventilation | 0.0324 × 1005 × (21 − 16) | 162.8 |
 | Internal gains | +450 | 450.0 |
-| **Hold** | | **1941.2** |
+| **Hold** | | **2 288.7** |
 
-The model returns 1941.25 W. Solar alone is 44% of it, which is why the
-irradiance slider now reaches 2000 W/m².
+The model returns 2288.71 W. Solar alone is 50% of it, which is why the
+irradiance slider now reaches 2000 W/m². WWR is the single most consequential
+input in the cooling case: every point of it lands twice, once through the
+glazing U-value and once, much harder, through the SHGC.
 
 ## 4. The ramp equation
 
@@ -78,7 +86,7 @@ At defaults: C_total = 39 074 (air) + 927 000 (shell) = 966 074 J/K, so
 
     P_mass = 966 074 × 14 / 1800 = 7 514 W
 
-and the heating design becomes (846 + 7 514) × 1.15 = **9 614 W**.
+and the heating design becomes (981 + 7 514) × 1.15 = **9 769 W**.
 
 `tests/test_dynamic_reference.py` rebuilds the chamber as a differential
 equation from the parameters alone, integrates it at 0.5-second steps, and
@@ -119,11 +127,11 @@ Consequence for 20 m² of 300 mm rammed earth on a 30-minute ramp:
 
 | | Ramp power | Heating design |
 | --- | --- | --- |
-| Diffusion-limited (this tool) | 15.0 kW | 18.2 kW |
-| Fully lumped (the old artifact) | 91.5 kW | 105.9 kW |
+| Diffusion-limited (this tool) | 15.0 kW | 18.3 kW |
+| Fully lumped (the old artifact) | 91.5 kW | 106.4 kW |
 
-A factor of 6.1. The old number would have bought a machine six times larger
-than the physics calls for.
+A factor of 5.8. The old number would have bought a machine nearly six times
+larger than the physics calls for.
 
 ### The direction of the error
 
@@ -190,8 +198,8 @@ plus 90 W of occupant moisture, times the margin: **455 W**.
 
 | Check | Reference | Default case |
 | --- | --- | --- |
-| Radiant heating flux | EN 1264 / ISO 11855, ~100 W/m² in occupied zones | 59 W/m² — within limit |
-| Radiant cooling flux | ISO 11855, ~40–50 W/m² floor, ~90 W/m² chilled ceiling | 135 W/m² — **exceeds**, air must carry the rest |
+| Radiant heating flux | EN 1264 / ISO 11855, ~100 W/m² in occupied zones | 68 W/m² — within limit |
+| Radiant cooling flux | ISO 11855, ~40–50 W/m² floor, ~90 W/m² chilled ceiling | 159 W/m² — **exceeds**, air must carry the rest |
 | Occupant sensible/latent | ASHRAE Fundamentals, 75/45 W seated light work | used as defaults |
 | Surface film coefficient | ~8 W/m²K combined interior, still air | used as default |
 | Air density and cp | 1.2 kg/m³, 1005 J/kgK | used throughout |
@@ -204,7 +212,7 @@ duty.
 ## 9. Numerical robustness
 
 `test_every_result_is_finite_across_the_whole_parameter_space` samples 4 000
-random points across the full declared range of all 44 inputs simultaneously
+random points across the full declared range of all 43 inputs simultaneously
 and asserts every output is finite. Degenerate geometry, zero ventilation, zero
 radiant area and inverted setpoints are all covered by their own tests.
 

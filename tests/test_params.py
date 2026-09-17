@@ -34,11 +34,21 @@ def test_ranges_requested_in_the_workshop_review():
     assert PARAMS_BY_KEY["equipment_w_per_m2"].maximum == 500.0
     assert PARAMS_BY_KEY["ach"].maximum == 20.0
     assert PARAMS_BY_KEY["solar_irradiance"].maximum == 2000.0
-    for key in ("length", "width", "height", "facade_width"):
+    for key in ("length", "width", "height"):
         assert PARAMS_BY_KEY[key].maximum == 20.0
     # Opaque and glazed facade U-values are separate inputs.
     assert "facade_u_opaque" in PARAMS_BY_KEY
     assert "facade_u_glazing" in PARAMS_BY_KEY
+
+
+def test_glazing_is_a_single_window_to_wall_ratio():
+    """One knob for the glass: WWR against the whole facade wall."""
+    spec = PARAMS_BY_KEY["wwr"]
+    assert spec.section == "envelope"
+    assert (spec.minimum, spec.maximum, spec.unit) == (0.0, 100.0, "%")
+    # The two parameters it replaced are gone, not merely hidden.
+    assert "facade_width" not in PARAMS_BY_KEY
+    assert "glazing_fraction" not in PARAMS_BY_KEY
 
 
 def test_ceiling_has_no_independent_boundary_temperature():

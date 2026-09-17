@@ -19,24 +19,33 @@ def test_areas_are_arithmetic_you_can_check_by_hand(p):
     assert r["volume"] == pytest.approx(4.0 * 3.0 * 2.7)
     assert r["floor_area"] == pytest.approx(12.0)
     assert r["interior_area"] == pytest.approx(2 * (12.0 + 4 * 2.7 + 3 * 2.7))
-    assert r["facade_area"] == pytest.approx(3.0 * 2.7)
-    assert r["glazing_area"] == pytest.approx(3.0 * 2.7 * 0.30)
-    assert r["opaque_facade_area"] == pytest.approx(3.0 * 2.7 * 0.70)
+    assert r["facade_area"] == pytest.approx(4.0 * 2.7)
+    assert r["glazing_area"] == pytest.approx(4.0 * 2.7 * 0.30)
+    assert r["opaque_facade_area"] == pytest.approx(4.0 * 2.7 * 0.70)
     # Everything not facade and not ceiling is the residual adiabatic set.
     assert r["residual_area"] == pytest.approx(r["interior_area"] - r["facade_area"] - r["ceiling_area"])
 
 
-def test_facade_width_cannot_exceed_the_longest_wall(p):
-    r = compute(p.replace(facade_width=20.0))
-    assert r["facade_area"] == pytest.approx(4.0 * 2.7)
+def test_facade_is_the_whole_longest_wall(p):
+    """Whichever of length and width is longer carries the facade."""
+    assert compute(p.replace(length=4.0, width=3.0))["facade_area"] == pytest.approx(4.0 * 2.7)
+    assert compute(p.replace(length=3.0, width=4.0))["facade_area"] == pytest.approx(4.0 * 2.7)
+
+
+def test_wwr_splits_the_facade_wall_and_nothing_else(p):
+    """WWR is measured against the whole wall, so the two areas always sum to it."""
+    for wwr in (0.0, 30.0, 100.0):
+        r = compute(p.replace(wwr=wwr))
+        assert r["glazing_area"] == pytest.approx(4.0 * 2.7 * wwr / 100.0)
+        assert r["glazing_area"] + r["opaque_facade_area"] == pytest.approx(r["facade_area"])
 
 
 # ---------------------------------------------------------------- steady state
 
 def test_heating_hold_reproduced_by_hand(p):
     r = compute(p)
-    a_glaze = 3.0 * 2.7 * 0.30
-    a_opaque = 3.0 * 2.7 * 0.70
+    a_glaze = 4.0 * 2.7 * 0.30
+    a_opaque = 4.0 * 2.7 * 0.70
     a_ceiling = 12.0
     a_residual = r["residual_area"]
     dt_boundary = 30.0 - (-10.0)
@@ -52,8 +61,8 @@ def test_heating_hold_reproduced_by_hand(p):
 
 def test_cooling_hold_reproduced_by_hand(p):
     r = compute(p)
-    a_glaze = 3.0 * 2.7 * 0.30
-    a_opaque = 3.0 * 2.7 * 0.70
+    a_glaze = 4.0 * 2.7 * 0.30
+    a_opaque = 4.0 * 2.7 * 0.70
     dt_boundary = 35.0 - 16.0
 
     conduction = 1.20 * a_opaque * dt_boundary + 1.40 * a_glaze * dt_boundary + 1.20 * 12.0 * dt_boundary
@@ -72,7 +81,7 @@ def test_glazing_uses_its_own_u_value(p):
     worse_glass = compute(p.replace(facade_u_glazing=5.7))
     assert worse_glass["heating_hold"] > base["heating_hold"]
     # Changing the opaque U must not move the glazed portion's contribution.
-    only_glass = compute(p.replace(glazing_fraction=100.0))
+    only_glass = compute(p.replace(wwr=100.0))
     assert only_glass["facade_opaque_heat"] == pytest.approx(0.0)
 
 

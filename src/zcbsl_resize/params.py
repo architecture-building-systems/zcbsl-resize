@@ -21,7 +21,7 @@ SECTIONS: list[dict[str, str]] = [
     {
         "key": "geometry",
         "title": "Geometry",
-        "blurb": "Internal dimensions of the chamber and how much of one wall is the reconfigurable facade.",
+        "blurb": "Internal clear dimensions of the chamber. The longest wall carries the reconfigurable facade.",
     },
     {
         "key": "mass",
@@ -31,7 +31,7 @@ SECTIONS: list[dict[str, str]] = [
     {
         "key": "envelope",
         "title": "Envelope",
-        "blurb": "Opaque and glazed facade separately, plus the ceiling and the residual adiabatic surfaces.",
+        "blurb": "Opaque and glazed facade separately, how much of the wall is glazed, plus the ceiling and the residual adiabatic surfaces.",
     },
     {
         "key": "boundary",
@@ -130,8 +130,6 @@ PARAMS: list[Param] = [
           "Internal clear dimension."),
     Param("height", "geometry", "Height", "m", 0.5, 20.0, 0.1, 1,
           "Internal clear dimension, floor to ceiling."),
-    Param("facade_width", "geometry", "Facade width", "m", 0.5, 20.0, 0.1, 1,
-          "How much of one wall is the reconfigurable facade. Capped at the longest wall."),
 
     # ---- thermal mass ---------------------------------------------------
     Param("base_shell_capacity", "mass", "Baseline shell capacitance", "kJ/m²K", 5.0, 200.0, 5.0, 0,
@@ -151,8 +149,9 @@ PARAMS: list[Param] = [
           "Opaque part of the facade assembly."),
     Param("facade_u_glazing", "envelope", "Facade U, glazing", "W/m²K", 0.40, 6.0, 0.05, 2,
           "Glazed part. Triple ≈0.7 · double ≈1.2 · old double ≈2.8 · single ≈5.7."),
-    Param("glazing_fraction", "envelope", "Glazing fraction", "%", 0.0, 100.0, 1.0, 0,
-          "Share of the facade area that is glazed. The rest uses the opaque U-value."),
+    Param("wwr", "envelope", "Window-to-wall ratio", "%", 0.0, 100.0, 1.0, 0,
+          "Glazed share of the facade wall, which is the whole of the longest wall. "
+          "The rest of it uses the opaque U-value."),
     Param("shgc", "envelope", "Glazing SHGC", "", 0.05, 0.90, 0.01, 2,
           "Solar heat gain coefficient of the glazed portion."),
     Param("ceiling_u", "envelope", "Ceiling U", "W/m²K", 0.08, 3.5, 0.01, 2,
@@ -254,7 +253,6 @@ class ChamberParams:
     length: float = 4.0
     width: float = 3.0
     height: float = 2.7
-    facade_width: float = 3.0
 
     # thermal mass
     base_shell_capacity: float = 15.0
@@ -266,7 +264,7 @@ class ChamberParams:
     # envelope
     facade_u_opaque: float = 1.20
     facade_u_glazing: float = 1.40
-    glazing_fraction: float = 30.0
+    wwr: float = 30.0
     shgc: float = 0.50
     ceiling_u: float = 1.20
     residual_u: float = 0.05
