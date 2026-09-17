@@ -1,0 +1,3 @@
+-r requirements.txt
+# optional: independent psychrometrics cross-check (tests skip if absent)
+psychrolib>=2.5

@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "name": "Workshop first-pass defaults",
+  "notes": "The case shown at the 2026-09-17 workshop: lightweight shell, no added mass, 30 min ramp.",
+  "params": {
+    "length": 4.0, "width": 3.0, "height": 2.7, "facade_width": 3.0,
+    "base_shell_capacity": 15.0, "added_mass_area": 0.0, "added_mass_thickness": 0.3,
+    "added_mass_rho_c": 1800.0, "added_mass_k": 1.25,
+    "facade_u_opaque": 1.2, "facade_u_glazing": 1.4, "glazing_fraction": 30.0, "shgc": 0.5,
+    "ceiling_u": 1.2, "residual_u": 0.05, "surrounding_temp": 21.0,
+    "boundary_temp_winter": -10.0, "boundary_temp_summer": 35.0,
+    "solar_irradiance": 700.0, "boundary_rh": 60.0,
+    "setpoint_min": 16.0, "setpoint_max": 30.0, "ramp_minutes": 30.0, "margin_pct": 15.0,
+    "ach": 3.0, "vent_supply_temp": 21.0, "vent_supply_rh": 60.0, "target_rh": 50.0,
+    "occupants": 2.0, "sensible_per_person": 75.0, "latent_per_person": 45.0,
+    "equipment_w_per_m2": 25.0,
+    "radiant_fraction": 60.0, "radiant_heat_limit": 100.0, "radiant_cool_limit": 60.0,
+    "supply_dt": 12.0, "surface_film_h": 8.0, "max_air_surface_dt": 15.0,
+    "buffer_volume_l": 1000.0, "buffer_dt": 15.0, "recharge_minutes": 60.0,
+    "n_chambers": 1.0, "diversity_pct": 100.0,
+    "pressure_pa": 96500.0
+  }
+}

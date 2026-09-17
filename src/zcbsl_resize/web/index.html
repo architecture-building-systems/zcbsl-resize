@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Chamber Ramp Sizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+  <div class="page-head">
+    <div class="eyebrow">Environmental test chamber &middot; sizing tool</div>
+    <h1>Chamber ramp &amp; hold sizing</h1>
+    <p>A parametric sizing envelope for the air-handling, radiant and plant capacity needed to ramp and hold a test chamber with a reconfigurable, climate-emulating facade. Every input is a live variable. The physics runs in Python on the server; this page only draws it.</p>
+  </div>
+
+  <div class="toolbar">
+    <button class="copy-btn" id="copy-summary" type="button">Copy summary</button>
+  </div>
+
+  <div class="stat-grid" id="stat-grid"></div>
+
+  <div class="insight-row" id="insight-row"></div>
+
+  <div class="chart-row">
+    <div class="chart-card">
+      <div class="chart-title">Design capacity vs. ramp time<button type="button" class="info-icon" tabindex="0" aria-label="What this chart shows"><span aria-hidden="true">i</span><span class="info-tooltip" role="tooltip">Recomputes heating and cooling design capacity across a range of ramp times, holding every other input fixed. The shaded band on the left is where the surface film cannot move heat into the mass fast enough, whatever the coil can produce.</span></button></div>
+      <div id="sensitivity-chart"></div>
+      <div class="chart-legend">
+        <span><span class="legend-swatch" style="background:var(--heat)"></span>Heating design</span>
+        <span><span class="legend-swatch" style="background:var(--cool)"></span>Cooling design</span>
+        <span><span class="legend-swatch" style="background:color-mix(in srgb, var(--crit) 25%, transparent)"></span>Physically unreachable</span>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">What the design number is made of<button type="button" class="info-icon" tabindex="0" aria-label="What this chart shows"><span aria-hidden="true">i</span><span class="info-tooltip" role="tooltip">Each bar splits the design capacity into what's needed to hold the boundary at steady state, what's needed to charge the room's mass for the ramp, and the safety margin on top.</span></button></div>
+      <div id="breakdown-chart"></div>
+      <div class="chart-legend">
+        <span><span class="legend-swatch" style="background:var(--surface-2);border:1px solid var(--line)"></span>Steady-state hold</span>
+        <span><span class="legend-swatch" style="background:color-mix(in srgb, var(--text) 55%, var(--surface))"></span>Ramp mass-charge</span>
+        <span><span class="legend-swatch" style="background:var(--accent)"></span>Safety margin</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="check-grid" id="check-grid"></div>
+
+  <details class="note-card">
+    <summary>Assumptions &amp; limitations &mdash; read before you quote these numbers</summary>
+    <ul>
+      <li>Ramp power assumes a <b>constant-rate linear transition</b> between setpoints, sized against the instantaneous load at the far end of the ramp. For a lumped capacity this is exact; <code>tests/test_dynamic_reference.py</code> confirms it against a time-stepped model.</li>
+      <li><b>Thermal mass is diffusion-limited.</b> Only the depth heat actually reaches within the ramp counts, using the closed-form linear-ramp solution for a semi-infinite solid. That assumes the surface itself follows the ramp perfectly, so it <i>overstates</i> participating mass; the real number is lower and the sizing is conservative.</li>
+      <li><b>The surface film is checked separately.</b> Heat enters the mass through roughly 8 W/m&sup2;K of combined convection and radiation. If the air would have to run further from the surfaces than you allow, the ramp time is unreachable at any coil size.</li>
+      <li>Winter heating design <b>ignores solar gain</b> (conservative). Summer cooling includes it via SHGC &times; glazed area &times; irradiance.</li>
+      <li>Opaque surfaces are driven by <b>air temperature only</b> &mdash; no sol-air correction for absorbed radiation on the opaque facade or roof. At high irradiance this understates the cooling load.</li>
+      <li>Only the floor and the walls that are not the facade are treated as adiabatic, with a small residual U-value against the surrounding lab. The facade and the ceiling are real boundaries and see the same emulated climate.</li>
+      <li>Latent load uses ASHRAE psychrometrics from dry-bulb and RH on both sides, checked against published table values. It does not model coil bypass, reheat, or the moisture stored in the room's own materials.</li>
+      <li>The buffer check verifies stored <i>energy</i> only (volume &times; usable &Delta;T), not the tank's discharge or flow-rate limit. The anergy-grid source side and heat-pump COP are not modelled.</li>
+      <li>Fan heat, duct gain, filter pressure drop and defrost energy are excluded. That is what the margin slider is for.</li>
+      <li>A first-pass exploration tool, not a substitute for a mechanical engineer's own load calculation and equipment selection.</li>
+    </ul>
+  </details>
+
+  <details class="note-card">
+    <summary>How much of this is checked?</summary>
+    <p>Every number above comes from <code>src/zcbsl_resize/physics.py</code>, which is covered by a test suite you can run with <code>pytest</code>. Psychrometrics are checked against published ASHRAE table values. The diffusion-limited mass model is checked against an independently written 1D finite-difference solve. The ramp equation is checked against a time-stepped two-node model of the chamber. See <code>docs/validation.md</code> for the worked hand-calculations.</p>
+  </details>
+</div>
+
+<div id="right-stack">
+  <button type="button" class="mobile-sheet-toggle" id="mobile-sheet-toggle" aria-expanded="false" aria-controls="pill-stack">
+    <span>Adjust inputs <span class="chip" id="param-count">&hellip;</span></span>
+    <span class="chevron" aria-hidden="true">&#9650;</span>
+  </button>
+  <div class="pill-stack" id="pill-stack">
+    <div class="control-title">
+      <h2>Parametric inputs</h2>
+      <p>Everything here is a slider on purpose. Converging on values is the workshop's job, not this tool's.</p>
+    </div>
+    <div class="control-actions">
+      <button class="copy-btn" id="btn-reset" type="button">Reset</button>
+      <button class="copy-btn" id="btn-save" type="button">Save scenario</button>
+      <button class="copy-btn" id="btn-load" type="button">Load scenario</button>
+      <input type="file" id="file-load" accept="application/json,.json" hidden>
+    </div>
+    <div class="status-line" id="status-line"></div>
+    <div id="pill-sections"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

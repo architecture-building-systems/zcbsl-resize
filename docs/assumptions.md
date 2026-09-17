@@ -1,0 +1,97 @@
+# Context and assumptions
+
+## The retrofit
+
+The ZCBS Lab test chambers have an undersized HVAC supply for both heating and
+cooling. Each chamber is adiabatic except for one reconfigurable facade and the
+ceiling, both of which carry real boundary conditions. A radiant system exists
+but is meant for in-experiment delivery, not rapid setpoint ramping.
+
+Each chamber is moving to a **dedicated** heat pump — the pooled plant is being
+retired because it cannot serve chambers that need different conditions at the
+same time — backed by a hot and a cold 1000 L Pufferspeicher, tied into ETH's
+anergy grid.
+
+Scoped at a workshop on 2026-09-17.
+
+## What the model covers
+
+- Room-level supply air: ramp plus baseline ventilation.
+- Radiant system: steady-state check only. Radiant is not sized for the ramp.
+- Per-room dedicated plant capacity, with buffer storage reducing it.
+- Latent load and dehumidification.
+- The physical ceiling on mass-charging rate imposed by the surface film.
+
+Thermal mass is parametric rather than a fixed light/medium/heavy category,
+because the lab is experimenting with different interior mass materials
+(rammed earth at present).
+
+Ramp time, setpoint range and facade construction are workshop-exploration
+variables, not fixed inputs. That is the whole reason every input is a slider.
+
+## Boundary conditions
+
+- The facade's far side is an emulated extreme climate, a real driving load.
+  Facade U-value, glazing U-value, glazing fraction, SHGC and boundary
+  temperature are all real, swappable variables.
+- The ceiling is also a real boundary and sees **the same emulated climate** as
+  the facade. It gets its own U-value but not its own temperatures.
+- Only the floor and the walls that are not the facade are treated as
+  adiabatic, and even they carry a small residual U-value against the
+  surrounding lab, since no real assembly is perfectly adiabatic.
+
+At the default geometry the ceiling is the single largest conducting surface,
+larger than the whole facade. Worth confirming what is actually above it.
+
+## Modelling assumptions
+
+- **Linear ramp.** Peak instantaneous power is evaluated at the target
+  setpoint, the worst instant against the boundary. Exact for a lumped
+  capacity; see `validation.md`.
+- **Diffusion-limited mass.** Only the depth heat reaches within the ramp
+  counts, from the closed-form linear-ramp solution for a semi-infinite solid.
+  This assumes the surface follows the ramp perfectly, so it overstates
+  participating mass and the sizing errs high.
+- **Surface film check.** Mass charging is capped at `h × A × ΔT_allowed`. This
+  is reported separately rather than folded into the capacity, because it is
+  not a capacity problem and cannot be solved by buying a bigger machine.
+- **Winter heating ignores solar gain** (conservative). Summer cooling includes
+  it through SHGC × glazed area × irradiance.
+- **No sol-air correction.** Opaque surfaces are driven by air temperature
+  only. At high irradiance on a dark opaque roof this understates the cooling
+  load, by decision, to keep the input set small.
+- **Latent load** uses ASHRAE psychrometrics from dry-bulb and RH on both
+  sides, sized at the cold setpoint. It does not model coil bypass, reheat, or
+  moisture buffering in the room's own materials.
+- **Buffer tanks** are checked for stored energy only, never their own
+  discharge or flow-rate limit. Check that against the tank spec separately.
+- **The anergy-grid source side** — source temperature, heat-pump COP — is not
+  modelled. Only the thermal kW the room demands.
+- **Aggregate grid figure** is per-chamber plant × chamber count × a
+  simultaneity fraction. No staggered scheduling, no N+1.
+- Fan heat, duct gain, filter pressure drop and defrost energy are excluded.
+  That is what the margin slider is for.
+
+## Two numbers to keep separate at the workshop
+
+The **air-side peak** is unavoidable: the coil and fan have to deliver the full
+ramp requirement to the room, and no buffer tank changes that.
+
+The **heat-pump peak** can be much smaller, because the Pufferspeicher absorbs
+the ramp surge. At defaults the 1000 L / 15 K buffer covers the whole ramp, so
+the heat pump only needs the steady hold plus its own recharge duty — about
+5.3 kW against a 9.6 kW air-side figure.
+
+## Open items
+
+- Confirm what is actually above the ceiling. It currently sees the same
+  emulated climate as the facade, which is the conservative reading, but if it
+  faces a plant room or the lab the load drops sharply.
+- Decide the allowable air-to-surface ΔT. It is the parameter that decides
+  whether a ramp target is reachable, and nobody has put a number on it yet.
+  15 K is a placeholder.
+- Agree a ramp time. Below the film limit the question stops being about
+  equipment.
+- Radiant cooling exceeds ISO 11855 flux limits at the default solar load, so
+  the air system carries the remainder continuously. Confirm that is
+  acceptable, or reduce the glazing or irradiance.
