@@ -7,10 +7,12 @@ Two problems get conflated under "the HVAC is undersized":
 * **Holding** a setpoint during an experiment, which is a steady-state problem
   set by the envelope, the ventilation and the internal gains.
 
-A third distinction matters once each chamber gets a dedicated heat pump backed
-by a buffer tank: the air-handling coil still has to deliver the full ramp peak
-to the room, but the heat pump can be smaller if the Pufferspeicher stores
-enough energy to cover the ramp surge.
+A third distinction matters once each room gets a dedicated heat pump: the hot
+and cold tanks it draws on are held at temperature by the interface heat pump on
+the anergy network, so they are an unlimited *source*, not a store.  Nothing
+absorbs the ramp surge on its way to the room, which means the room's own
+machine has to carry the full design capacity, not a buffer-relieved fraction
+of it.
 
 And a fourth, which the original workshop tool missed entirely: heat only
 enters the thermal mass through a surface film of roughly 8 W/m^2K.  That puts
@@ -219,23 +221,55 @@ def compute(
     air_steady_heating = np.maximum(heating_hold - np.asarray(p["radiant_heat_limit"], dtype=float) * radiant_area, 0.0)
     air_steady_cooling = np.maximum(cooling_hold - np.asarray(p["radiant_cool_limit"], dtype=float) * radiant_area, 0.0)
 
-    # -- dedicated plant and buffer ---------------------------------------
-    buffer_energy = np.asarray(p["buffer_volume_l"], dtype=float) * CP_WATER * p["buffer_dt"]  # J per tank
-    energy_from_buffer = np.minimum(energy_mass, buffer_energy)
-    energy_shortfall = np.maximum(energy_mass - buffer_energy, 0.0)
-    plant_during_ramp = energy_shortfall / ramp_s
-    plant_recharge = energy_from_buffer / np.maximum(np.asarray(p["recharge_minutes"], dtype=float) * 60.0, 1e-9)
-    plant_extra = np.maximum(plant_during_ramp, plant_recharge)
-    plant_heating = (heating_hold + plant_extra) * (1.0 + margin_frac)
-    plant_cooling = (cooling_hold + plant_extra) * (1.0 + margin_frac)
-    buffer_covers_ramp = buffer_energy >= energy_mass
-    buffer_coverage_pct = np.where(
-        energy_mass > 0.0, np.minimum(buffer_energy / np.maximum(energy_mass, 1e-9), 1.0) * 100.0, 100.0
+    # -- dedicated heat pump ----------------------------------------------
+    # Each room has its own machine.  The hot and cold tanks are held at
+    # temperature by the interface heat pump on the anergy network, so they are
+    # an unlimited source rather than a store: nothing absorbs the ramp surge,
+    # and the room's machine carries the full design capacity.
+    #
+    # Each duty exchanges with the tank on its own side: heating lifts from the
+    # hot tank up to the supply temperature, cooling lifts from the supply
+    # temperature up to the cold tank.  If the return actually goes to the warm
+    # side instead, set tank_temp_cold to the hot tank's value and watch the
+    # cooling COP fall.
+    approach = np.asarray(p["exchanger_approach"], dtype=float)
+    eta = np.asarray(p["carnot_efficiency"], dtype=float)
+
+    supply_temp_heating = t_max + np.asarray(p["supply_dt"], dtype=float)
+    supply_temp_cooling = t_min - np.asarray(p["supply_dt"], dtype=float)
+
+    # Free exchange: no compressor needed when the tank is already past the
+    # temperature the coil has to reach.
+    free_heating = supply_temp_heating <= (np.asarray(p["tank_temp_hot"], dtype=float) - approach)
+    free_cooling = supply_temp_cooling >= (np.asarray(p["tank_temp_cold"], dtype=float) + approach)
+
+    # Lift across the compressor, with the approach paid at both ends.
+    lift_heating = np.maximum(
+        (supply_temp_heating + approach) - (np.asarray(p["tank_temp_hot"], dtype=float) - approach), 0.0
+    )
+    lift_cooling = np.maximum(
+        (np.asarray(p["tank_temp_cold"], dtype=float) + approach) - (supply_temp_cooling - approach), 0.0
     )
 
-    diversity = np.asarray(p["diversity_pct"], dtype=float) / 100.0
-    aggregate_heating = plant_heating * p["n_chambers"] * diversity
-    aggregate_cooling = plant_cooling * p["n_chambers"] * diversity
+    # Carnot, times an efficiency factor. Guard the zero-lift limit.
+    sink_k_heating = supply_temp_heating + approach + 273.15
+    source_k_cooling = supply_temp_cooling - approach + 273.15
+    cop_heating = eta * sink_k_heating / np.maximum(lift_heating, 0.5)
+    cop_cooling = eta * source_k_cooling / np.maximum(lift_cooling, 0.5)
+
+    # When a duty is free the compressor is not needed at all, so the COP
+    # figure is meaningless; read free_heating / free_cooling alongside it.
+    # The lift is clamped rather than divided by zero, so these stay finite and
+    # a DataFrame of them stays plottable.
+
+    hp_heating = heating_design
+    hp_cooling = cooling_design
+    electric_heating = np.where(free_heating, 0.0, hp_heating / np.maximum(cop_heating, 1e-9))
+    electric_cooling = np.where(free_cooling, 0.0, hp_cooling / np.maximum(cop_cooling, 1e-9))
+
+    # What the tanks and the network see.
+    tank_extract_heating = hp_heating - electric_heating   # drawn out of the hot tank
+    tank_reject_cooling = hp_cooling + electric_cooling    # pushed into the cold tank
 
     return {
         # geometry
@@ -304,16 +338,21 @@ def compute(
         "radiant_cool_ok": radiant_cool_ok,
         "air_steady_heating": air_steady_heating,
         "air_steady_cooling": air_steady_cooling,
-        # plant
-        "buffer_energy_j": buffer_energy,
-        "buffer_energy_kwh": buffer_energy / 3.6e6,
-        "buffer_covers_ramp": buffer_covers_ramp,
-        "buffer_coverage_pct": buffer_coverage_pct,
-        "plant_extra": plant_extra,
-        "plant_heating": plant_heating,
-        "plant_cooling": plant_cooling,
-        "aggregate_heating": aggregate_heating,
-        "aggregate_cooling": aggregate_cooling,
+        # dedicated heat pump
+        "hp_heating": hp_heating,
+        "hp_cooling": hp_cooling,
+        "supply_temp_heating": supply_temp_heating,
+        "supply_temp_cooling": supply_temp_cooling,
+        "lift_heating": lift_heating,
+        "lift_cooling": lift_cooling,
+        "cop_heating": cop_heating,
+        "cop_cooling": cop_cooling,
+        "electric_heating": electric_heating,
+        "electric_cooling": electric_cooling,
+        "tank_extract_heating": tank_extract_heating,
+        "tank_reject_cooling": tank_reject_cooling,
+        "free_heating": free_heating,
+        "free_cooling": free_cooling,
     }
 
 

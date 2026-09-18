@@ -253,6 +253,13 @@ radiant area and inverted setpoints are all covered by their own tests.
   materially.
 - Per-surface irradiance is a peak value you supply, not a computed solar
   position. Nothing here knows the date, the latitude or the shading.
-- The buffer tank check verifies stored energy only, never its discharge rate.
+- The hot and cold tanks are assumed to hold 30 C and 10 C indefinitely, so
+  nothing checks their discharge rate, the 70 kW interface heat pump, or what
+  happens when all four rooms draw at once. See the fleet question in
+  `assumptions.md`.
+- COP is Carnot times an efficiency factor. Over the small lifts this
+  arrangement gives, that produces numbers a real machine will not reach, since
+  compressor minimum pressure ratio and part-load losses are not modelled.
+  It is an upper bound, and it does not affect the thermal sizing at all.
 - No validation against measured chamber data, because there is none yet. If
   the lab logs a real ramp, `tests/` is where that comparison belongs.

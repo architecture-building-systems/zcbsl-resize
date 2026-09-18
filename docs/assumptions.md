@@ -73,12 +73,21 @@ Worth confirming what is actually above it.
 - **Latent load** uses ASHRAE psychrometrics from dry-bulb and RH on both
   sides, sized at the cold setpoint. It does not model coil bypass, reheat, or
   moisture buffering in the room's own materials.
-- **Buffer tanks** are checked for stored energy only, never their own
-  discharge or flow-rate limit. Check that against the tank spec separately.
-- **The anergy-grid source side** — source temperature, heat-pump COP — is not
-  modelled. Only the thermal kW the room demands.
-- **Aggregate grid figure** is per-chamber plant × chamber count × a
-  simultaneity fraction. No staggered scheduling, no N+1.
+- **The tanks are an unlimited source at fixed temperature** (30 C hot, 10 C
+  cold), because the 70 kW interface heat pump on the anergy network holds them
+  there. They are not a store, so nothing absorbs the ramp surge and each
+  room's machine carries its full design capacity.
+- **Each duty exchanges with the tank on its own side**: heating lifts from the
+  hot tank to the supply temperature, cooling lifts from the supply temperature
+  to the cold tank. If the return actually goes to the warm side, set
+  `tank_temp_cold` to the hot tank's value and the cooling COP falls sharply.
+- **COP is Carnot times an efficiency factor**, not a manufacturer curve. Over
+  the small lifts an anergy network gives, this produces high numbers that a
+  real machine will not reach: compressors have a minimum pressure ratio and
+  part-load losses that are not modelled. Treat the COP as an upper bound and
+  detune `carnot_efficiency` to taste.
+- **Nothing at fleet level is modelled.** Four rooms share two tanks and one
+  70 kW interface pump; whether that holds up is the open question below.
 - Fan heat, duct gain, filter pressure drop and defrost energy are excluded.
   That is what the margin slider is for.
 

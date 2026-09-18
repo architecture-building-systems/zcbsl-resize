@@ -60,8 +60,10 @@ SECTIONS: list[dict[str, str]] = [
     },
     {
         "key": "plant",
-        "title": "Dedicated plant & buffer",
-        "blurb": "Each chamber's own heat pump, its Pufferspeicher, and the shared grid tie-in.",
+        "title": "Dedicated heat pump",
+        "blurb": "Each room gets its own machine, drawing on the hot and cold tanks. "
+                 "The tanks are held at temperature by the network, so they are treated as an "
+                 "unlimited source rather than a store.",
     },
     {"key": "site", "title": "Site", "blurb": "Ambient conditions that shift the psychrometrics."},
 ]
@@ -275,17 +277,19 @@ PARAMS: list[Param] = [
           "How far the air may run from the surfaces while charging the mass. "
           "This decides whether a ramp time is physically reachable at all."),
 
-    # ---- plant ----------------------------------------------------------
-    Param("buffer_volume_l", "plant", "Buffer volume, per tank", "L", 100.0, 10000.0, 50.0, 0,
-          "One hot and one cold Pufferspeicher of this size."),
-    Param("buffer_dt", "plant", "Usable buffer ΔT", "K", 3.0, 40.0, 1.0, 0,
-          "Temperature swing the tank can give up before it stops being useful."),
-    Param("recharge_minutes", "plant", "Recharge window", "min", 5.0, 480.0, 5.0, 0,
-          "Time the heat pump has to refill the buffer before the next ramp."),
-    Param("n_chambers", "plant", "Chambers on the tie-in", "", 1.0, 12.0, 1.0, 0,
-          "For the aggregate anergy-grid figure only."),
-    Param("diversity_pct", "plant", "Simultaneity", "%", 10.0, 100.0, 5.0, 0,
-          "Share of chambers assumed to peak together."),
+    # ---- dedicated heat pump ---------------------------------------------
+    Param("tank_temp_hot", "plant", "Hot tank temperature", "\u00b0C", 5.0, 60.0, 0.5, 1,
+          "The warm expansion tank, held at temperature by the 70 kW interface heat pump on the "
+          "anergy network. Source for the heating duty."),
+    Param("tank_temp_cold", "plant", "Cold tank temperature", "\u00b0C", -10.0, 30.0, 0.5, 1,
+          "The cold expansion tank. Sink for the cooling duty, and the source for free cooling "
+          "when the required supply temperature is above it."),
+    Param("exchanger_approach", "plant", "Heat exchanger approach", "K", 0.5, 10.0, 0.5, 1,
+          "Temperature difference the exchangers give away at each end. Applied on both sides, "
+          "so it costs twice this much of lift."),
+    Param("carnot_efficiency", "plant", "Fraction of Carnot", "", 0.2, 0.8, 0.01, 2,
+          "How close the machine gets to the theoretical limit. Good heat pumps over a small lift "
+          "reach 0.45-0.55. This is an estimate, not a manufacturer curve."),
 
     # ---- site -----------------------------------------------------------
     Param("pressure_pa", "site", "Atmospheric pressure", "Pa", 80000.0, 103000.0, 100.0, 0,
@@ -387,12 +391,11 @@ class ChamberParams:
     surface_film_h: float = 8.0
     max_air_surface_dt: float = 15.0
 
-    # plant
-    buffer_volume_l: float = 1000.0
-    buffer_dt: float = 15.0
-    recharge_minutes: float = 60.0
-    n_chambers: float = 1.0
-    diversity_pct: float = 100.0
+    # dedicated heat pump
+    tank_temp_hot: float = 30.0
+    tank_temp_cold: float = 10.0
+    exchanger_approach: float = 3.0
+    carnot_efficiency: float = 0.50
 
     # site
     pressure_pa: float = 96500.0
@@ -463,7 +466,7 @@ DEFAULTS = ChamberParams()
 # Scenario files (JSON in, JSON out)
 # --------------------------------------------------------------------------
 
-SCENARIO_FORMAT = 2
+SCENARIO_FORMAT = 3
 
 
 def save_scenario(
@@ -496,7 +499,8 @@ def load_scenario(path: str | Path) -> dict[str, Any]:
     if fmt != SCENARIO_FORMAT:
         raise ValueError(
             f"scenario format {fmt!r} is not supported (expected {SCENARIO_FORMAT}). "
-            "Format 1 predates the per-surface envelope and cannot be converted automatically."
+            "Earlier formats predate the per-surface envelope and the dedicated heat pump, "
+            "and cannot be converted automatically."
         )
     return {
         "name": payload.get("name", ""),

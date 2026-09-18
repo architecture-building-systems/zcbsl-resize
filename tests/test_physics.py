@@ -296,26 +296,86 @@ def test_bigger_supply_dt_shrinks_the_airflow(p):
     assert wide["design_flow_m3s"] < narrow["design_flow_m3s"]
 
 
-# ---------------------------------------------------------------- plant
+# ---------------------------------------------------------------- heat pump
 
-def test_buffer_covering_the_ramp_leaves_only_recharge_duty(p):
+def test_the_room_machine_carries_the_full_design_capacity(p):
+    """The tanks are a source, not a buffer, so nothing absorbs the ramp surge."""
     r = compute(p)
-    assert bool(r["buffer_covers_ramp"])
-    assert r["plant_extra"] == pytest.approx(r["energy_mass_j"] / (60.0 * 60.0))
-    assert r["plant_heating"] < r["heating_design"]
+    assert r["hp_heating"] == pytest.approx(r["heating_design"])
+    assert r["hp_cooling"] == pytest.approx(r["cooling_design"])
 
 
-def test_an_undersized_buffer_pushes_duty_back_onto_the_heat_pump(p):
-    small = compute(p.replace(buffer_volume_l=100.0, added_mass_area=30.0))
-    assert not bool(small["buffer_covers_ramp"])
-    assert small["buffer_coverage_pct"] < 100.0
-    assert small["plant_heating"] > compute(p)["plant_heating"]
+def test_lift_is_measured_from_the_tank_to_the_supply_temperature(p):
+    r = compute(p)
+    assert r["supply_temp_heating"] == pytest.approx(p.setpoint_max + p.supply_dt)
+    assert r["supply_temp_cooling"] == pytest.approx(p.setpoint_min - p.supply_dt)
+    # The approach is paid at both ends.
+    assert r["lift_heating"] == pytest.approx(
+        (p.setpoint_max + p.supply_dt + p.exchanger_approach)
+        - (p.tank_temp_hot - p.exchanger_approach)
+    )
+    assert r["lift_cooling"] == pytest.approx(
+        (p.tank_temp_cold + p.exchanger_approach)
+        - (p.setpoint_min - p.supply_dt - p.exchanger_approach)
+    )
 
 
-def test_aggregate_scales_with_count_and_simultaneity(p):
-    one = compute(p)
-    many = compute(p.replace(n_chambers=6.0, diversity_pct=50.0))
-    assert many["aggregate_heating"] == pytest.approx(one["plant_heating"] * 6 * 0.5)
+def test_cop_is_carnot_times_the_efficiency_factor(p):
+    r = compute(p)
+    sink_k = p.setpoint_max + p.supply_dt + p.exchanger_approach + 273.15
+    assert r["cop_heating"] == pytest.approx(p.carnot_efficiency * sink_k / r["lift_heating"])
+    assert r["cop_heating"] > 1.0
+
+
+def test_a_smaller_lift_gives_a_better_cop(p):
+    warm_tank = compute(p.replace(tank_temp_hot=40.0))
+    cold_tank = compute(p.replace(tank_temp_hot=15.0))
+    assert warm_tank["cop_heating"] > cold_tank["cop_heating"]
+    assert warm_tank["electric_heating"] < cold_tank["electric_heating"]
+
+
+def test_electrical_input_is_thermal_over_cop(p):
+    r = compute(p)
+    assert r["electric_heating"] == pytest.approx(r["hp_heating"] / r["cop_heating"])
+    assert r["electric_cooling"] == pytest.approx(r["hp_cooling"] / r["cop_cooling"])
+
+
+def test_what_the_tanks_see_obeys_an_energy_balance(p):
+    """Heating takes thermal minus the compressor work out of the hot tank;
+    cooling pushes thermal plus the work into the cold one."""
+    r = compute(p)
+    assert r["tank_extract_heating"] == pytest.approx(r["hp_heating"] - r["electric_heating"])
+    assert r["tank_reject_cooling"] == pytest.approx(r["hp_cooling"] + r["electric_cooling"])
+    assert r["tank_reject_cooling"] > r["hp_cooling"]
+
+
+def test_free_cooling_when_the_cold_tank_is_already_cold_enough(p):
+    """A narrow supply dT lets the 10 C tank serve the coil directly."""
+    direct = compute(p.replace(setpoint_min=20.0, supply_dt=5.0, tank_temp_cold=10.0))
+    assert bool(direct["free_cooling"])
+    assert direct["electric_cooling"] == pytest.approx(0.0)
+
+
+def test_no_free_cooling_at_a_wide_supply_dt(p):
+    """16 C setpoint with a 12 K supply dT wants 4 C air; a 10 C tank cannot."""
+    r = compute(p)
+    assert not bool(r["free_cooling"])
+    assert r["electric_cooling"] > 0.0
+
+
+def test_free_heating_when_the_hot_tank_is_already_hot_enough(p):
+    direct = compute(p.replace(setpoint_max=20.0, supply_dt=5.0, tank_temp_hot=30.0))
+    assert bool(direct["free_heating"])
+    assert direct["electric_heating"] == pytest.approx(0.0)
+
+
+def test_buffer_and_fleet_outputs_are_gone(p):
+    """The tanks are held at temperature by the network, so stored energy and
+    the per-room recharge duty no longer mean anything."""
+    r = compute(p)
+    for dead in ("buffer_energy_j", "buffer_coverage_pct", "plant_extra",
+                 "plant_heating", "aggregate_heating"):
+        assert dead not in r
 
 
 # ---------------------------------------------------------------- vectorisation
@@ -325,7 +385,7 @@ def test_arrays_give_the_same_answers_as_a_scalar_loop(p):
     vector = compute(p, ramp_minutes=ramps)
     for i, t in enumerate(ramps):
         scalar = compute(p, ramp_minutes=float(t))
-        for key in ("heating_design", "cooling_design", "power_mass", "plant_heating", "design_flow_ls"):
+        for key in ("heating_design", "cooling_design", "power_mass", "electric_cooling", "design_flow_ls"):
             assert vector[key][i] == pytest.approx(scalar[key])
 
 

@@ -129,7 +129,7 @@ def one_at_a_time(
     keys: Sequence[str] | None = None,
     *,
     points: int = 21,
-    outputs: Sequence[str] = ("heating_design", "cooling_design", "plant_heating", "design_flow_ls"),
+    outputs: Sequence[str] = ("heating_design", "cooling_design", "electric_cooling", "design_flow_ls"),
     lumped_mass: bool = False,
 ) -> pd.DataFrame:
     """Local sensitivity: vary each parameter across its full declared range.

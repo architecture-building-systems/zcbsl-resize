@@ -321,12 +321,14 @@
     html += statTile(r.film_ok ? "neutral" : "alert", "Air-to-surface ΔT needed", fmt(r.required_air_surface_dt, 1), "K",
       r.film_ok ? "within your allowance" : "exceeds your allowance — ramp unreachable",
       "To charge the mass this fast, the room air has to run this far from the surfaces. It is set by the surface film coefficient and the interior area, and no amount of coil capacity changes it.");
-    html += statTile("heat", "Dedicated heat pump, heating", kW(r.plant_heating), "kW",
-      "hold " + kW(r.heating_hold) + " + buffer assist " + kW(r.plant_extra) + " + margin",
-      "The room's own heat pump, sized with the hot Pufferspeicher absorbing the ramp surge, so it covers the steady hold plus whatever the buffer cannot.");
-    html += statTile("cool", "Dedicated heat pump, cooling", kW(r.plant_cooling), "kW",
-      "hold " + kW(r.cooling_hold) + " + buffer assist " + kW(r.plant_extra) + " + margin",
-      "Same logic as the heating heat pump, using the cold Pufferspeicher.");
+    html += statTile("heat", "Heating COP", fmt(r.cop_heating, 1), "",
+      r.free_heating ? "no compressor needed \u2014 direct from the hot tank"
+                     : "lift " + fmt(r.lift_heating, 0) + " K \u00b7 " + kW(r.electric_heating) + " kW electric",
+      "Carnot across the lift from the hot tank up to the supply temperature, times the efficiency factor. An estimate, not a manufacturer curve \u2014 at very small lifts a real machine will not reach this.");
+    html += statTile("cool", "Cooling COP", fmt(r.cop_cooling, 1), "",
+      r.free_cooling ? "no compressor needed \u2014 direct from the cold tank"
+                     : "lift " + fmt(r.lift_cooling, 0) + " K \u00b7 " + kW(r.electric_cooling) + " kW electric",
+      "Same calculation for the cooling duty, lifting from the supply temperature up to the cold tank.");
     html += statTile("neutral", "Fastest reachable ramp", fmt(r.min_feasible_ramp_minutes, 0), "min",
       "at " + fmt(state.max_air_surface_dt, 0) + " K air-to-surface allowance",
       "The shortest ramp the surface film physically permits for this much mass. Asking for less than this cannot work regardless of equipment.");
@@ -375,27 +377,36 @@
         "</div>";
     }
 
-    var bufText;
-    if (r.buffer_covers_ramp) {
-      bufText = "Your " + fmt(state.buffer_volume_l, 0) + " L buffer stores about <b>" + fmt(r.buffer_energy_kwh, 1) +
-        " kWh</b>, enough to cover this ramp's <b>" + fmt(r.energy_mass_kwh, 1) +
-        " kWh</b> mass-charge surge entirely. The dedicated heat pump then only needs <b>" + kW(r.plant_extra) +
-        " kW</b> continuously to refill it inside the " + fmt(state.recharge_minutes, 0) + "-minute window.";
-    } else {
-      bufText = "Your " + fmt(state.buffer_volume_l, 0) + " L buffer stores about <b>" + fmt(r.buffer_energy_kwh, 1) +
-        " kWh</b>, only " + fmt(r.buffer_coverage_pct, 0) + "% of this ramp's <b>" + fmt(r.energy_mass_kwh, 1) +
-        " kWh</b> surge. The heat pump still has to supply <b>" + kW(r.plant_extra) +
-        " kW</b> on top of the steady hold. A bigger tank or a slower ramp brings that down.";
-    }
-    html += '<div class="insight accent span-2">' + bufText +
-      infoIcon("Buffer coverage compares stored energy (volume &times; usable &Delta;T) with the ramp's mass-charge energy. When it covers the ramp, the heat pump only tracks steady state and its own recharge.") + "</div>";
+    var hpText = "Each room has its own machine. The tanks are held at " +
+      fmt(state.tank_temp_hot, 0) + " \u00b0C and " + fmt(state.tank_temp_cold, 0) +
+      " \u00b0C by the network, so they are an unlimited source rather than a store: " +
+      "nothing absorbs the ramp surge and this machine carries the full <b>" + kW(r.hp_cooling) +
+      " kW</b> cooling / <b>" + kW(r.hp_heating) + " kW</b> heating peak." +
+      infoIcon("An earlier version of this tool assumed a buffer tank between the plant and the room, which let the heat pump be sized well below the air-side peak. That is not the arrangement here.");
+    html += '<div class="insight accent span-2">' + hpText + "</div>";
 
-    var agg = "If " + fmt(state.n_chambers, 0) + " chamber(s) peak together at " + fmt(state.diversity_pct, 0) +
-      "% simultaneity, the aggregate anergy-grid tie-in needs roughly <b>" + kW(r.aggregate_heating) +
-      " kW</b> heating and <b>" + kW(r.aggregate_cooling) + " kW</b> cooling across all dedicated plants.";
-    if (state.n_chambers <= 1) agg += " With one chamber this equals its own dedicated plant.";
-    html += '<div class="insight muted span-2">' + agg +
-      infoIcon("Each chamber's own heat pump is still sized to its own number above. This figure is only what the shared grid connection has to supply.") + "</div>";
+    var coolText;
+    if (r.free_cooling) {
+      coolText = "The cooling coil needs <b>" + fmt(r.supply_temp_cooling, 0) +
+        " \u00b0C</b>, which the " + fmt(state.tank_temp_cold, 0) +
+        " \u00b0C cold tank can supply directly across a " + fmt(state.exchanger_approach, 0) +
+        " K approach. <b>No chiller needed for this duty.</b>";
+    } else {
+      coolText = "The cooling coil needs <b>" + fmt(r.supply_temp_cooling, 0) +
+        " \u00b0C</b>, below what the " + fmt(state.tank_temp_cold, 0) +
+        " \u00b0C tank can reach across a " + fmt(state.exchanger_approach, 0) +
+        " K approach, so the duty needs a compressor. Free cooling would need a supply \u0394T of at most <b>" +
+        fmt(state.setpoint_min - state.tank_temp_cold - 2 * state.exchanger_approach, 0) +
+        " K</b> against the current " + fmt(state.supply_dt, 0) + " K.";
+    }
+    html += '<div class="insight cool span-2">' + coolText +
+      infoIcon("Free cooling means the cold tank feeds the coil directly. It depends on the setpoint and the supply &Delta;T, not on the plant.") + "</div>";
+
+    html += '<div class="insight muted span-2">The tanks see <b>' + kW(r.tank_extract_heating) +
+      " kW</b> drawn out on the heating duty and <b>" + kW(r.tank_reject_cooling) +
+      " kW</b> pushed in on the cooling duty, including compressor work. Whether the tanks and " +
+      "the 70 kW interface pump can carry that across all four rooms is a separate question this tool does not answer." +
+      infoIcon("Heating extracts thermal minus compressor work; cooling rejects thermal plus compressor work. Both eventually land on the anergy network.") + "</div>";
 
     el("insight-row").innerHTML = html;
   }
@@ -546,9 +557,18 @@
       " m², the most that can enter the mass is <b class=\"mono\">" + kW(r.max_mass_power) +
       " kW</b>, giving a fastest ramp of <b>" + fmt(r.min_feasible_ramp_minutes, 0) + " min</b>.",
       "Mass charging is capped by convection and radiation from the air to the surfaces. This is independent of coil capacity and is usually the binding constraint.");
-    html += checkCard("Buffer coverage of the ramp", r.energy_mass_kwh, r.buffer_energy_kwh, r.buffer_covers_ramp, "kWh",
-      "Stored energy only. The tank's own discharge and flow-rate limits still need checking against its spec.",
-      "Ramp mass-charge energy against the Pufferspeicher's stored energy (volume &times; usable &Delta;T).");
+    var needed = state.setpoint_min - state.supply_dt;
+    var reachable = state.tank_temp_cold + state.exchanger_approach;
+    html += '<div class="check-card">' +
+      '<div class="check-head"><h3>Free cooling from the cold tank' +
+      infoIcon("Can the cold tank feed the coil directly, with no compressor? It needs to be colder than the supply temperature by at least the exchanger approach.") +
+      '</h3><span class="badge ' + (r.free_cooling ? "good" : "warn") + '">' +
+      (r.free_cooling ? "available" : "chiller needed") + "</span></div>" +
+      '<div class="check-nums"><span>coil needs ' + fmt(needed, 1) + " \u00b0C</span><span>tank can reach " +
+      fmt(reachable, 1) + " \u00b0C</span></div>" +
+      '<div class="check-note">Cooling lift <b class="mono">' + fmt(r.lift_cooling, 0) +
+      " K</b>, heating lift <b class=\"mono\">" + fmt(r.lift_heating, 0) +
+      " K</b>. The cooling duty is the harder one here, and the larger machine.</div></div>";
     el("check-grid").innerHTML = html;
   }
 
@@ -583,9 +603,11 @@
       "Air-to-surface dT needed: " + fmt(r.required_air_surface_dt, 1) + " K vs " + fmt(state.max_air_surface_dt, 0) + " K allowed -> " + (r.film_ok ? "REACHABLE" : "NOT REACHABLE"),
       "Fastest ramp the surface film permits: " + fmt(r.min_feasible_ramp_minutes, 0) + " min",
       "Added mass participating: " + fmt(100 * r.added_participating_fraction, 0) + "% (" + fmt(r.added_penetration_mm, 0) + " mm of " + fmt(1000 * state.added_mass_thickness, 0) + " mm)",
-      "Dedicated heat pump: heating " + kW(r.plant_heating) + " kW, cooling " + kW(r.plant_cooling) + " kW, with " + fmt(state.buffer_volume_l, 0) + " L buffer at " + fmt(state.buffer_dt, 0) + " K swing",
-      "Buffer covers " + fmt(r.buffer_coverage_pct, 0) + "% of the ramp's " + fmt(r.energy_mass_kwh, 1) + " kWh surge",
-      "Aggregate grid tie-in (" + fmt(state.n_chambers, 0) + " chambers at " + fmt(state.diversity_pct, 0) + "%): heating " + kW(r.aggregate_heating) + " kW, cooling " + kW(r.aggregate_cooling) + " kW",
+      "Dedicated heat pump (tanks at " + fmt(state.tank_temp_hot, 0) + " / " + fmt(state.tank_temp_cold, 0) + " C, unlimited source):",
+      "  heating " + kW(r.hp_heating) + " kW thermal, lift " + fmt(r.lift_heating, 0) + " K, COP " + fmt(r.cop_heating, 1) + ", " + kW(r.electric_heating) + " kW electric",
+      "  cooling " + kW(r.hp_cooling) + " kW thermal, lift " + fmt(r.lift_cooling, 0) + " K, COP " + fmt(r.cop_cooling, 1) + ", " + kW(r.electric_cooling) + " kW electric",
+      "  free cooling from the cold tank: " + (r.free_cooling ? "AVAILABLE" : "not available, chiller needed"),
+      "  tanks see " + kW(r.tank_extract_heating) + " kW extracted (heating) / " + kW(r.tank_reject_cooling) + " kW rejected (cooling)",
       "Radiant heating " + fmt(r.radiant_flux_heat, 0) + " W/m2 (limit " + fmt(state.radiant_heat_limit, 0) + ") - " + (r.radiant_heat_ok ? "OK" : "EXCEEDS"),
       "Radiant cooling " + fmt(r.radiant_flux_cool, 0) + " W/m2 (limit " + fmt(state.radiant_cool_limit, 0) + ") - " + (r.radiant_cool_ok ? "OK" : "EXCEEDS"),
       "First-pass sizing envelope, not a substitute for a full mechanical load calculation."

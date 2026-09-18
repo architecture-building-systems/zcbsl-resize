@@ -66,12 +66,15 @@ shared:
   surface_film_h: 8.0                       # still air; raise if you blow over surfaces
   max_air_surface_dt: [5.0, 30.0, 5.0]      # THE decisive unknown
 
-  # ---- dedicated plant and buffer ----------------------------------------
-  buffer_volume_l: [500.0, 3000.0, 500.0]
-  buffer_dt: [10.0, 25.0, null]
-  recharge_minutes: [30.0, 240.0, 70.0]
-  n_chambers: 2.0                           # CONFIRM: just these two on the tie-in?
-  diversity_pct: [50.0, 100.0, 25.0]
+  # ---- dedicated heat pump -----------------------------------------------
+  # One machine per room, drawing on the hot and cold expansion tanks. Those
+  # are held at temperature by the 70 kW interface heat pump on the anergy
+  # network, so they are an unlimited SOURCE, not a store: nothing absorbs the
+  # ramp surge and each room's machine carries its full design capacity.
+  tank_temp_hot: 30.0
+  tank_temp_cold: 10.0
+  exchanger_approach: [1.0, 5.0, 1.0]
+  carnot_efficiency: [0.35, 0.60, 0.05]
 
   # ---- design conditions --------------------------------------------------
   boundary_temp_winter: -8.0                # CONFIRM: Zurich design condition?
@@ -142,6 +145,11 @@ study:
     - min_feasible_ramp_minutes
     - radiant_flux_cool
     - envelope_conductance
+    - cop_heating
+    - cop_cooling
+    - electric_cooling
+    - tank_reject_cooling
+    - free_cooling
 
   # Factorial grids. Keep each to 2-3 axes; check_config.py prints the row count.
   grids:
@@ -149,8 +157,8 @@ study:
       axes: [ramp_minutes, added_mass_area, base_shell_capacity]
     envelope:
       axes: [south_wwr, south_u_opaque, south_irradiance]
-    plant:
-      axes: [buffer_volume_l, recharge_minutes, ramp_minutes]
+    heat_pump:
+      axes: [supply_dt, setpoint_min, carnot_efficiency]
     operation:
       axes: [setpoint_min, setpoint_max, equipment_w_per_m2]
 

@@ -17,7 +17,7 @@ in different ways:
 | --- | --- | --- |
 | **Ramping** between setpoints | Total heat capacity over the time allowed | More coil capacity, less mass, or more time |
 | **Holding** a setpoint | Envelope, ventilation, internal gains | Radiant capacity, envelope, plant |
-| **Plant sizing** | Steady hold plus whatever the buffer cannot absorb | Bigger tank, longer recharge window |
+| **Plant sizing** | The room's full design capacity, since nothing buffers it | Nothing, at room level: this is the number |
 
 And a fourth constraint that no amount of equipment touches: heat only crosses
 from the room air into the thermal mass through a surface film of roughly
@@ -53,7 +53,7 @@ params = rooms.module_room().replace(ramp_minutes=45, added_mass_area=20)
 r = compute(params)
 
 print(r["heating_design"] / 1000, "kW at the coil")
-print(r["plant_heating"] / 1000, "kW at the heat pump")
+print(r["cop_cooling"], "COP on the cooling duty")
 print(r["min_feasible_ramp_minutes"], "min is the fastest the surface film allows")
 ```
 
@@ -160,7 +160,7 @@ need to explain a number someone wrote down at the workshop.
 ## Not modelled
 
 Sol-air temperature on opaque surfaces, fan and duct heat, control-loop
-dynamics, coil bypass and reheat, the buffer tank's own discharge rate, the
-anergy-grid source side and heat-pump COP, and staggered scheduling across
-chambers. A first-pass sizing envelope, not a mechanical engineer's load
+dynamics, coil bypass and reheat, part-load behaviour, the tanks' own discharge
+rate, the 70 kW interface pump, and anything at fleet level: how four rooms
+sharing two tanks behave together is a separate analysis. A first-pass sizing envelope, not a mechanical engineer's load
 calculation.
