@@ -30,12 +30,16 @@ DEFAULT_MAX_CASES = 5_000_000
 
 
 def _broadcast_to_frame(
-    inputs: Mapping[str, Any], results: Mapping[str, Any], n: int
+    inputs: Mapping[str, Any],
+    results: Mapping[str, Any],
+    n: int,
+    outputs: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     columns: dict[str, np.ndarray] = {}
     for key, value in inputs.items():
         columns[key] = np.broadcast_to(np.asarray(value), (n,)).copy()
-    for key, value in results.items():
+    wanted = results if outputs is None else {k: results[k] for k in outputs}
+    for key, value in wanted.items():
         arr = np.asarray(value)
         if arr.dtype == bool:
             columns[key] = np.broadcast_to(arr, (n,)).copy()
@@ -55,8 +59,14 @@ def evaluate(
     overrides: Mapping[str, np.ndarray] | None = None,
     *,
     lumped_mass: bool = False,
+    outputs: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Run one already-built set of parameter arrays and return a DataFrame."""
+    """Run one already-built set of parameter arrays and return a DataFrame.
+
+    ``outputs`` selects which result columns to keep.  The model returns over a
+    hundred of them, including a per-surface breakdown, so a large sweep that
+    keeps everything can need gigabytes.  Name the handful you actually plot.
+    """
     overrides = dict(overrides or {})
     _validate_keys(overrides)
     base = params.to_dict()
@@ -65,7 +75,11 @@ def evaluate(
     lengths = {np.asarray(v).size for v in overrides.values()} or {1}
     n = max(lengths)
     results = compute(base, lumped_mass=lumped_mass)
-    return _broadcast_to_frame(base, results, n)
+    if outputs is not None:
+        unknown = sorted(set(outputs) - set(results))
+        if unknown:
+            raise KeyError(f"not model outputs: {unknown}")
+    return _broadcast_to_frame(base, results, n, outputs)
 
 
 def grid_sweep(
@@ -73,6 +87,7 @@ def grid_sweep(
     axes: Mapping[str, Sequence[float]],
     *,
     lumped_mass: bool = False,
+    outputs: Sequence[str] | None = None,
     max_cases: int = DEFAULT_MAX_CASES,
 ) -> pd.DataFrame:
     """Full factorial over ``axes``. One row per combination.
@@ -82,7 +97,7 @@ def grid_sweep(
     """
     _validate_keys(axes)
     if not axes:
-        return evaluate(params, lumped_mass=lumped_mass)
+        return evaluate(params, lumped_mass=lumped_mass, outputs=outputs)
 
     vectors = [np.asarray(v, dtype=float).ravel() for v in axes.values()]
     total = int(np.prod([v.size for v in vectors]))
@@ -93,7 +108,7 @@ def grid_sweep(
         )
     mesh = np.meshgrid(*vectors, indexing="ij")
     overrides = {key: grid.ravel() for key, grid in zip(axes.keys(), mesh)}
-    return evaluate(params, overrides, lumped_mass=lumped_mass)
+    return evaluate(params, overrides, lumped_mass=lumped_mass, outputs=outputs)
 
 
 def ramp_sweep(
@@ -101,11 +116,12 @@ def ramp_sweep(
     minutes: Sequence[float] | None = None,
     *,
     lumped_mass: bool = False,
+    outputs: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Design capacity across a range of ramp times. Drives the sensitivity chart."""
     if minutes is None:
         minutes = [5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 90, 105, 120, 150, 180, 240, 300, 360, 420, 480]
-    return grid_sweep(params, {"ramp_minutes": minutes}, lumped_mass=lumped_mass)
+    return grid_sweep(params, {"ramp_minutes": minutes}, lumped_mass=lumped_mass, outputs=outputs)
 
 
 def one_at_a_time(
@@ -130,7 +146,7 @@ def one_at_a_time(
     for key in keys:
         spec = PARAMS_BY_KEY[key]
         values = np.linspace(spec.minimum, spec.maximum, points)
-        df = evaluate(params, {key: values}, lumped_mass=lumped_mass)
+        df = evaluate(params, {key: values}, lumped_mass=lumped_mass, outputs=list(outputs))
         tidy = pd.DataFrame({"parameter": key, "label": spec.label, "unit": spec.unit, "value": values})
         for out in outputs:
             base_val = float(np.asarray(baseline[out]))
@@ -164,6 +180,7 @@ def latin_hypercube(
     *,
     seed: int | None = None,
     lumped_mass: bool = False,
+    outputs: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Space-filling sample over ``ranges``, for when a full grid is too large."""
     _validate_keys(ranges)
@@ -172,7 +189,7 @@ def latin_hypercube(
     for key, (low, high) in ranges.items():
         cut = (np.arange(n) + rng.random(n)) / n
         overrides[key] = low + rng.permutation(cut) * (high - low)
-    return evaluate(params, overrides, lumped_mass=lumped_mass)
+    return evaluate(params, overrides, lumped_mass=lumped_mass, outputs=outputs)
 
 
 def run_scenario_file(path: str | Path, *, lumped_mass: bool = False) -> pd.DataFrame:

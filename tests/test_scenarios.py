@@ -50,7 +50,7 @@ def test_oversized_grids_are_refused():
     with pytest.raises(ValueError, match="exceeds max_cases"):
         grid_sweep(
             ChamberParams(),
-            {"ramp_minutes": np.arange(1000), "ach": np.arange(1000), "length": np.arange(20)},
+            {"ramp_minutes": np.arange(1000), "ach": np.arange(1000), "depth": np.arange(20)},
             max_cases=1_000_000,
         )
 
@@ -62,10 +62,19 @@ def test_a_million_cases_stay_fast():
     df = grid_sweep(
         ChamberParams(),
         {"ramp_minutes": np.linspace(5, 480, 1000), "added_mass_area": np.linspace(0, 100, 1000)},
+        outputs=["heating_design", "cooling_design", "min_feasible_ramp_minutes", "film_ok"],
     )
     elapsed = time.perf_counter() - start
     assert len(df) == 1_000_000
+    assert list(df.columns)[-4:] == [
+        "heating_design", "cooling_design", "min_feasible_ramp_minutes", "film_ok",
+    ]
     assert elapsed < 30.0
+
+
+def test_unknown_output_names_are_rejected():
+    with pytest.raises(KeyError, match="not model outputs"):
+        grid_sweep(ChamberParams(), {"ramp_minutes": [30]}, outputs=["heating_desgin"])
 
 
 def test_ramp_sweep_is_monotonic_in_capacity():

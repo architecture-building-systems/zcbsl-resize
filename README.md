@@ -46,9 +46,10 @@ save and load write and read the same JSON format the Python API uses.
 ## Use it as a library
 
 ```python
-from zcbsl_resize import ChamberParams, compute
+from zcbsl_resize import ChamberParams, compute, rooms
 
-params = ChamberParams(ramp_minutes=45, added_mass_area=20, added_mass_thickness=0.30)
+r = compute(rooms.climate_chamber())          # a real room, as built
+params = rooms.module_room().replace(ramp_minutes=45, added_mass_area=20)
 r = compute(params)
 
 print(r["heating_design"] / 1000, "kW at the coil")
@@ -65,12 +66,12 @@ one call rather than a loop.
 from zcbsl_resize import ChamberParams, save_scenario
 from zcbsl_resize.scenarios import grid_sweep, sensitivity_ranking, latin_hypercube
 
-df = grid_sweep(ChamberParams(), {
+df = grid_sweep(rooms.module_room(), {
     "ramp_minutes": [15, 30, 45, 60, 120],
     "added_mass_area": [0, 10, 20, 40],
-    "added_mass_thickness": [0.10, 0.20, 0.30],
+    "south_wwr": [0, 20, 40, 60, 80],
     "ach": [1, 3, 6, 12],
-})                                   # 240 rows, inputs and outputs side by side
+}, outputs=["heating_design", "cooling_design", "min_feasible_ramp_minutes"])
 
 ranked = sensitivity_ranking(ChamberParams(), output="heating_design")
 sample = latin_hypercube(ChamberParams(), {"ramp_minutes": (10, 120)}, n=5000, seed=1)
@@ -79,8 +80,18 @@ save_scenario(ChamberParams(ramp_minutes=45), "scenarios/slow-ramp.json",
               name="45 min ramp", sweeps={"added_mass_area": [0, 10, 20, 40]})
 ```
 
-A million cases run in a few seconds. `grid_sweep` refuses anything above five
-million unless you raise `max_cases` on purpose.
+A million cases run in a few seconds. Name the `outputs` you actually need: the
+model returns over a hundred columns including a per-surface breakdown, and
+keeping all of them on a million rows costs well over a gigabyte. `grid_sweep`
+refuses anything above five million rows unless you raise `max_cases` on
+purpose.
+
+## The study configuration
+
+`study/rooms.yaml` describes both rooms and what to sweep, starting from the
+baselines in `rooms.py` so only what varies appears in the file.
+`python study/check_config.py` validates it against the model and prints the
+size of each grid before you run one.
 
 ## Trusting the numbers
 
@@ -111,6 +122,8 @@ the model does not do.
 ```
 src/zcbsl_resize/
   params.py       parameter schema, defaults, scenario JSON
+  surfaces.py     the six faces of the shoebox and their areas
+  rooms.py        the module room and the climate chamber, as built
   physics.py      the model; numpy-safe, scalar or array
   mass.py         diffusion-limited thermal mass + FD reference solver
   psychro.py      ASHRAE psychrometrics
@@ -130,11 +143,12 @@ numbers here differ from it deliberately:
 
 - Thermal mass is diffusion-limited rather than fully lumped. For thick, dense
   layers the old tool overstated the ramp requirement by roughly 6×.
-- The facade has separate opaque and glazing U-values, and covers the whole
-  of the longest wall, split by a window-to-wall ratio rather than by a
-  separate facade-width input.
-- The ceiling shares the facade's emulated climate instead of having its own
-  boundary temperatures.
+- The envelope is described surface by surface: six faces, each with its own
+  U-values, glazing, solar and exposure. The artifact had one facade plus an
+  adiabatic residual, which understated a freestanding room's envelope by a
+  factor of 2.5.
+- Exposure replaces the adiabatic residual: each surface blends between the lab
+  and the outdoor design condition.
 - Equipment gains are per square metre of floor, up to 500 W/m².
 - Latent load comes from real psychrometrics on both air states rather than a
   "moisture excess" figure nobody could estimate.

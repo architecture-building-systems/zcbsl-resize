@@ -147,6 +147,19 @@
       "</div>";
   }
 
+  function shellPresetHtml() {
+    var options = Object.keys(schema.shell_presets || {}).map(function (key) {
+      var m = schema.shell_presets[key];
+      return '<option value="' + key + '">' + esc(m.label) + " \u2014 " + m.capacity + " kJ/m\u00b2K</option>";
+    }).join("");
+    if (!options) return "";
+    return '<div class="field">' +
+      '<div class="field-row"><span class="field-label">Shell lining preset</span></div>' +
+      '<select id="shell-preset"><option value="">Custom\u2026</option>' + options + "</select>" +
+      '<div class="field-hint" id="shell-note">All of these are thermally thin, so the whole layer participates.</div>' +
+      "</div>";
+  }
+
   function presetHtml() {
     var options = Object.keys(schema.presets).map(function (key) {
       return '<option value="' + key + '">' + esc(schema.presets[key].label) + "</option>";
@@ -167,7 +180,7 @@
     var html = schema.sections.map(function (section, index) {
       var params = bySection[section.key] || [];
       var body = (section.blurb ? '<p class="pill-blurb">' + esc(section.blurb) + "</p>" : "") +
-        (section.key === "mass" ? presetHtml() : "") +
+        (section.key === "mass" ? shellPresetHtml() + presetHtml() : "") +
         params.map(fieldHtml).join("");
       return '<details class="pill" data-section="' + section.key + '"' + (index === 0 ? " open" : "") + ">" +
         '<summary><span class="pill-title">' + esc(section.title) + "</span>" +
@@ -193,6 +206,17 @@
         pill.querySelector(".pill-summary-mark").textContent = pill.open ? "−" : "+";
       });
     });
+
+    var shell = el("shell-preset");
+    if (shell) {
+      shell.addEventListener("change", function () {
+        var chosen = (schema.shell_presets || {})[shell.value];
+        if (!chosen) return;
+        setValue("base_shell_capacity", chosen.capacity);
+        el("shell-note").textContent = chosen.note;
+        requestCompute();
+      });
+    }
 
     var preset = el("mass-preset");
     preset.addEventListener("change", function () {
@@ -475,6 +499,39 @@
       "</div>";
   }
 
+  function renderEnvelope(r) {
+    var rows = (schema.surfaces || []).map(function (s2) {
+      var area = r["area_" + s2.key], ua = r["conductance_" + s2.key];
+      var exposure = state[s2.key + "_exposure"];
+      var glazed = r["glazed_area_" + s2.key];
+      var share = r.envelope_conductance > 0 ? (ua / r.envelope_conductance) * 100 : 0;
+      return '<tr>' +
+        '<td style="padding:0.2rem 0.5rem 0.2rem 0;font-weight:600">' + esc(s2.label) + "</td>" +
+        '<td class="mono" style="text-align:right;padding:0.2rem 0.5rem">' + fmt(area, 1) + "</td>" +
+        '<td class="mono" style="text-align:right;padding:0.2rem 0.5rem">' + fmt(glazed, 1) + "</td>" +
+        '<td class="mono" style="text-align:right;padding:0.2rem 0.5rem">' + fmt(exposure, 2) + "</td>" +
+        '<td class="mono" style="text-align:right;padding:0.2rem 0.5rem">' + fmt(ua, 1) + "</td>" +
+        '<td style="padding:0.2rem 0 0.2rem 0.5rem;width:70px">' +
+          '<div style="height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden">' +
+          '<div style="height:100%;width:' + Math.min(share, 100).toFixed(0) + '%;background:var(--accent)"></div></div></td>' +
+        "</tr>";
+    }).join("");
+    el("envelope-card").innerHTML =
+      '<div class="chart-title">Envelope by surface' +
+      infoIcon("Areas come from the geometry. Exposure is 1 for a surface facing outdoors and 0 for one facing the lab. The bar is each surface\u2019s share of the total conductance.") +
+      "</div>" +
+      '<table style="width:100%;border-collapse:collapse;font-size:0.76rem">' +
+      '<thead><tr style="color:var(--muted);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.03em">' +
+      '<th style="text-align:left;padding-bottom:0.3rem">Surface</th>' +
+      '<th style="text-align:right;padding-bottom:0.3rem">m\u00b2</th>' +
+      '<th style="text-align:right;padding-bottom:0.3rem">glazed</th>' +
+      '<th style="text-align:right;padding-bottom:0.3rem">exp.</th>' +
+      '<th style="text-align:right;padding-bottom:0.3rem">W/K</th>' +
+      '<th style="padding-bottom:0.3rem"></th></tr></thead><tbody>' + rows + "</tbody></table>" +
+      '<div class="chart-legend"><span>Total ' + fmt(r.envelope_conductance, 1) +
+      " W/K \u00b7 interior surface " + fmt(r.interior_area, 0) + " m\u00b2</span></div>";
+  }
+
   function renderChecks(r) {
     var html = "";
     html += checkCard("Radiant heating flux", r.radiant_flux_heat, state.radiant_heat_limit, r.radiant_heat_ok, "W/m²",
@@ -501,6 +558,7 @@
     renderInsights(data);
     renderSensitivity(data);
     renderBreakdown(data.results);
+    renderEnvelope(data.results);
     renderChecks(data.results);
   }
 
@@ -511,8 +569,12 @@
     var r = latest.results;
     return [
       "Chamber ramp & hold sizing",
-      "Room: " + fmt(state.length, 1) + " x " + fmt(state.width, 1) + " x " + fmt(state.height, 1) +
-        " m; facade " + fmt(r.facade_area, 1) + " m2 (" + fmt(state.wwr, 0) + "% WWR)",
+      "Room: " + fmt(state.width, 2) + " w x " + fmt(state.depth, 2) + " d x " + fmt(state.height, 2) +
+        " m; interior " + fmt(r.interior_area, 0) + " m2, glazed " + fmt(r.glazed_area, 1) + " m2",
+      "Envelope: " + fmt(r.envelope_conductance, 1) + " W/K over " +
+        (schema.surfaces || []).map(function (s2) {
+          return s2.key + " " + fmt(r["conductance_" + s2.key], 1);
+        }).join(", "),
       "Setpoints " + fmt(r.setpoint_min, 1) + " to " + fmt(r.setpoint_max, 1) + " C, ramp " + fmt(r.ramp_minutes, 0) + " min",
       "Heating design (AHU): " + kW(r.heating_design) + " kW (hold " + kW(r.heating_hold) + " + ramp " + kW(r.power_mass) + ", incl. " + fmt(state.margin_pct, 0) + "% margin)",
       "Cooling design (AHU): " + kW(r.cooling_design) + " kW (hold " + kW(r.cooling_hold) + " + ramp " + kW(r.power_mass) + ")",

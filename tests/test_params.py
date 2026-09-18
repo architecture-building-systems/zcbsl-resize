@@ -4,6 +4,7 @@ from dataclasses import fields
 
 import pytest
 
+from zcbsl_resize.surfaces import SURFACES, SURFACE_FIELDS
 from zcbsl_resize.params import (
     PARAMS,
     PARAMS_BY_KEY,
@@ -33,27 +34,39 @@ def test_defaults_sit_inside_their_declared_ranges():
 def test_ranges_requested_in_the_workshop_review():
     assert PARAMS_BY_KEY["equipment_w_per_m2"].maximum == 500.0
     assert PARAMS_BY_KEY["ach"].maximum == 20.0
-    assert PARAMS_BY_KEY["solar_irradiance"].maximum == 2000.0
-    for key in ("length", "width", "height"):
-        assert PARAMS_BY_KEY[key].maximum == 20.0
-    # Opaque and glazed facade U-values are separate inputs.
-    assert "facade_u_opaque" in PARAMS_BY_KEY
-    assert "facade_u_glazing" in PARAMS_BY_KEY
+    for key in ("width", "depth", "height"):
+        assert PARAMS_BY_KEY[key].maximum >= 20.0
+    # Irradiance is now per surface, and still reaches the lamp-array range.
+    assert PARAMS_BY_KEY["south_irradiance"].maximum == 2000.0
 
 
-def test_glazing_is_a_single_window_to_wall_ratio():
-    """One knob for the glass: WWR against the whole facade wall."""
-    spec = PARAMS_BY_KEY["wwr"]
-    assert spec.section == "envelope"
-    assert (spec.minimum, spec.maximum, spec.unit) == (0.0, 100.0, "%")
-    # The two parameters it replaced are gone, not merely hidden.
-    assert "facade_width" not in PARAMS_BY_KEY
-    assert "glazing_fraction" not in PARAMS_BY_KEY
+def test_every_surface_carries_a_full_construction():
+    """Each of the six faces gets its own U-values, glazing, solar and exposure."""
+    for surface in SURFACES:
+        for suffix, _, _ in SURFACE_FIELDS:
+            key = f"{surface.key}_{suffix}"
+            assert key in PARAMS_BY_KEY, f"missing {key}"
+            assert PARAMS_BY_KEY[key].section == f"surf_{surface.key}"
 
 
-def test_ceiling_has_no_independent_boundary_temperature():
-    """The ceiling sees the same emulated climate as the facade, by decision."""
-    assert not any(k.startswith("ceiling_temp") for k in PARAMS_BY_KEY)
+def test_single_facade_parameters_are_gone_not_hidden():
+    """The one-facade-plus-residual abstraction is removed outright."""
+    for dead in (
+        "facade_width", "glazing_fraction", "facade_u_opaque", "facade_u_glazing",
+        "ceiling_u", "residual_u", "solar_irradiance", "wwr", "shgc", "length",
+    ):
+        assert dead not in PARAMS_BY_KEY
+
+
+def test_exposure_spans_interior_to_exterior():
+    spec = PARAMS_BY_KEY["north_exposure"]
+    assert (spec.minimum, spec.maximum) == (0.0, 1.0)
+
+
+def test_a_surface_can_be_made_perfectly_adiabatic():
+    """Zero U on both parts, rather than a special boundary type."""
+    assert PARAMS_BY_KEY["north_u_opaque"].minimum == 0.0
+    assert PARAMS_BY_KEY["north_u_glazing"].minimum == 0.0
 
 
 def test_unknown_keys_are_rejected_not_ignored():
@@ -64,9 +77,9 @@ def test_unknown_keys_are_rejected_not_ignored():
 
 
 def test_clamping_pulls_values_into_range():
-    clamped = ChamberParams(ach=999.0, length=-4.0).clamped()
+    clamped = ChamberParams(ach=999.0, depth=-4.0).clamped()
     assert clamped.ach == PARAMS_BY_KEY["ach"].maximum
-    assert clamped.length == PARAMS_BY_KEY["length"].minimum
+    assert clamped.depth == PARAMS_BY_KEY["depth"].minimum
 
 
 def test_scenario_round_trip(tmp_path):

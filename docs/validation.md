@@ -4,69 +4,98 @@ Everything below is reproducible: `PYTHONPATH=src python -m pytest tests -q`.
 The hand calculations use the shipped defaults, so you can check them with a
 calculator and nothing else.
 
-Default case: 4.0 × 3.0 × 2.7 m chamber, the 4.0 m wall glazed at 30% WWR,
-setpoints 16–30 °C, 30-minute ramp, 3 ACH at 21 °C / 60% RH, 2 occupants,
-25 W/m² equipment, 15% margin, Zurich pressure 96 500 Pa.
+Default case: a 3.00 m wide x 4.00 m deep x 2.70 m high room with the south
+wall and the roof exterior and everything else facing the lab at 21 C; south
+wall 30% glazed; setpoints 16-30 C, 30-minute ramp, 3 ACH at 21 C / 60% RH, 2
+occupants, 25 W/m2 equipment, 15% margin, Zurich pressure 96 500 Pa.
 
 ## 1. Areas
 
-| Quantity | By hand | Model |
+Width runs east-west and depth north-south, so the north and south walls are
+width x height, the east and west walls are depth x height, and the roof and
+floor are width x depth.
+
+| Surface | By hand | Area |
 | --- | --- | --- |
-| Volume | 4.0 × 3.0 × 2.7 | 32.4 m³ |
-| Interior surface | 2 × (12.0 + 10.8 + 8.1) | 61.8 m² |
-| Facade (the whole longest wall) | 4.0 × 2.7 | 10.80 m² |
-| — glazed | 10.80 × 0.30 | 3.24 m² |
-| — opaque | 10.80 × 0.70 | 7.56 m² |
-| Ceiling | 4.0 × 3.0 | 12.0 m² |
-| Residual adiabatic | 61.8 − 10.8 − 12.0 | 39.0 m² |
+| North wall | 3.00 x 2.70 | 8.10 m2 |
+| East wall | 4.00 x 2.70 | 10.80 m2 |
+| South wall | 3.00 x 2.70 | 8.10 m2 |
+| West wall | 4.00 x 2.70 | 10.80 m2 |
+| Roof | 3.00 x 4.00 | 12.00 m2 |
+| Floor | 3.00 x 4.00 | 12.00 m2 |
+| **Interior total** | | **61.80 m2** |
+| Volume | 3.00 x 4.00 x 2.70 | 32.40 m3 |
 
-The facade occupies the entire longest wall; the window-to-wall ratio splits
-that wall into glass and opaque, and only the floor and the other three walls
-are left in the adiabatic residual.
+Every square metre belongs to a named surface. There is no residual bucket.
 
-## 2. Steady-state heating hold
+## 2. Conductances
 
-Evaluated at the warm setpoint (30 °C) against the winter boundary (−10 °C),
-so ΔT = 40 K. Solar is ignored in the heating case, which is conservative.
+Each surface carries its own opaque and glazing U-values, and its glazed share
+comes from its own window-to-wall ratio.
+
+| Surface | By hand | W/K |
+| --- | --- | --- |
+| South (30% glazed) | 1.20 x 5.67 + 1.40 x 2.43 | 10.206 |
+| Roof (opaque) | 1.20 x 12.00 | 14.400 |
+| North (interior) | 0.05 x 8.10 | 0.405 |
+| East (interior) | 0.05 x 10.80 | 0.540 |
+| West (interior) | 0.05 x 10.80 | 0.540 |
+| Floor (interior) | 0.05 x 12.00 | 0.600 |
+| **Envelope total** | | **26.691** |
+
+## 3. Steady-state hold loads
+
+Each surface faces a temperature set by its exposure: `T_face = T_lab +
+exposure x (T_outdoor - T_lab)`. Exposed surfaces see -8 to -10 C in winter,
+interior ones stay at the 21 C lab.
+
+**Heating**, evaluated at the warm setpoint (30 C) against the winter boundary
+(-10 C). Solar is ignored, which is conservative.
 
 | Term | By hand | W |
 | --- | --- | --- |
-| Opaque facade | 1.20 × 7.56 × 40 | 362.9 |
-| Glazed facade | 1.40 × 3.24 × 40 | 181.4 |
-| Ceiling | 1.20 × 12.0 × 40 | 576.0 |
-| Residual surfaces | 0.05 × 39.0 × (30 − 21) | 17.6 |
-| Ventilation | (3 × 32.4 × 1.2 / 3600) × 1005 × (30 − 21) | 293.1 |
-| Internal gains | −(2 × 75 + 25 × 12) | −450.0 |
-| **Hold** | | **980.9** |
+| South wall | 10.206 x (30 - (-10)) | 408.24 |
+| Roof | 14.400 x 40 | 576.00 |
+| North + east + west + floor | 2.085 x (30 - 21) | 18.77 |
+| Ventilation | (3 x 32.4 x 1.2 / 3600) x 1005 x (30 - 21) | 293.06 |
+| Internal gains | -(2 x 75 + 25 x 12) | -450.00 |
+| **Hold** | | **846.06** |
 
-The model returns 980.928 W.
+The model returns 846.063 W.
 
-Note what dominates: the ceiling, at 576 W, is still marginally more than the
-whole facade at 544 W, despite the facade now covering an entire wall. It is a
-single surface facing the emulated climate with the same U-value as the opaque
-facade, and nothing in the brief says it has to be. Worth a look during the
-workshop.
-
-## 3. Steady-state cooling hold
-
-At the cold setpoint (16 °C) against the summer boundary (35 °C), ΔT = 19 K,
-with solar included.
+**Cooling**, at the cold setpoint (16 C) against summer (35 C), with solar.
 
 | Term | By hand | W |
 | --- | --- | --- |
-| Opaque facade | 1.20 × 7.56 × 19 | 172.4 |
-| Glazed facade | 1.40 × 3.24 × 19 | 86.2 |
-| Ceiling | 1.20 × 12.0 × 19 | 273.6 |
-| Solar through glazing | 0.50 × 3.24 × 700 | 1 134.0 |
-| Residual surfaces | 0.05 × 39.0 × (21 − 16) | 9.8 |
-| Ventilation | 0.0324 × 1005 × (21 − 16) | 162.8 |
-| Internal gains | +450 | 450.0 |
-| **Hold** | | **2 288.7** |
+| South wall conduction | 10.206 x (35 - 16) | 193.91 |
+| Solar through its glazing | 0.50 x 2.43 x 700 | 850.50 |
+| Roof | 14.400 x 19 | 273.60 |
+| North + east + west + floor | 2.085 x (21 - 16) | 10.43 |
+| Ventilation | 0.0324 x 1005 x (21 - 16) | 162.81 |
+| Internal gains | +450 | 450.00 |
+| **Hold** | | **1941.25** |
 
-The model returns 2288.71 W. Solar alone is 50% of it, which is why the
-irradiance slider now reaches 2000 W/m². WWR is the single most consequential
-input in the cooling case: every point of it lands twice, once through the
-glazing U-value and once, much harder, through the SHGC.
+The model returns 1941.249 W. Solar alone is 44% of it.
+
+## 3a. Why the envelope is described surface by surface
+
+The earlier version of this model had one facade plus a ceiling and lumped
+everything else into an adiabatic residual. That works for a room embedded in a
+building. It fails badly for a freestanding one.
+
+The climate chamber is 8.00 x 4.50 x 12.00 m with its north, east and west
+walls and its roof all exterior. Only the south wall and the floor face
+interior space.
+
+| | Single-facade model | Per-surface model |
+| --- | --- | --- |
+| Envelope conductance | 124.3 W/K | **310.7 W/K** |
+| Exterior wall area treated as adiabatic | 204 m2 | 0 m2 |
+
+A factor of 2.5, and the old model also had no slot at all for solar on the
+east and west walls. `tests/test_physics.py` pins the corrected behaviour for
+both real rooms, including that the module room's facade is its 3.75 m south
+wall rather than whichever wall happens to be longest.
 
 ## 4. The ramp equation
 
@@ -86,7 +115,7 @@ At defaults: C_total = 39 074 (air) + 927 000 (shell) = 966 074 J/K, so
 
     P_mass = 966 074 × 14 / 1800 = 7 514 W
 
-and the heating design becomes (981 + 7 514) × 1.15 = **9 769 W**.
+and the heating design becomes (846 + 7 514) × 1.15 = **9 614 W**.
 
 `tests/test_dynamic_reference.py` rebuilds the chamber as a differential
 equation from the parameters alone, integrates it at 0.5-second steps, and
@@ -198,8 +227,8 @@ plus 90 W of occupant moisture, times the margin: **455 W**.
 
 | Check | Reference | Default case |
 | --- | --- | --- |
-| Radiant heating flux | EN 1264 / ISO 11855, ~100 W/m² in occupied zones | 68 W/m² — within limit |
-| Radiant cooling flux | ISO 11855, ~40–50 W/m² floor, ~90 W/m² chilled ceiling | 159 W/m² — **exceeds**, air must carry the rest |
+| Radiant heating flux | EN 1264 / ISO 11855, ~100 W/m² in occupied zones | 59 W/m² — within limit |
+| Radiant cooling flux | ISO 11855, ~40–50 W/m² floor, ~90 W/m² chilled ceiling | 135 W/m² — **exceeds**, air must carry the rest |
 | Occupant sensible/latent | ASHRAE Fundamentals, 75/45 W seated light work | used as defaults |
 | Surface film coefficient | ~8 W/m²K combined interior, still air | used as default |
 | Air density and cp | 1.2 kg/m³, 1005 J/kgK | used throughout |
@@ -212,15 +241,18 @@ duty.
 ## 9. Numerical robustness
 
 `test_every_result_is_finite_across_the_whole_parameter_space` samples 4 000
-random points across the full declared range of all 43 inputs simultaneously
+random points across the full declared range of all 72 inputs simultaneously
 and asserts every output is finite. Degenerate geometry, zero ventilation, zero
 radiant area and inverted setpoints are all covered by their own tests.
 
 ## What is still unchecked
 
 - Sol-air temperature on opaque surfaces is not modelled at all, by decision.
-  At 2 000 W/m² on a dark opaque roof this understates the cooling load
+  Solar enters only through glazing, so an opaque wall or roof under 2 000 W/m²
+  contributes nothing. At high irradiance this understates the cooling load
   materially.
+- Per-surface irradiance is a peak value you supply, not a computed solar
+  position. Nothing here knows the date, the latitude or the shading.
 - The buffer tank check verifies stored energy only, never its discharge rate.
 - No validation against measured chamber data, because there is none yet. If
   the lab logs a real ramp, `tests/` is where that comparison belongs.

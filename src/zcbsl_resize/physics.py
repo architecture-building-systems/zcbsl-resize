@@ -30,6 +30,7 @@ import numpy as np
 from . import mass as mass_mod
 from . import psychro
 from .params import ChamberParams
+from .surfaces import SURFACES
 
 #: Density of air, kg/m^3, at roughly 20 degC.
 RHO_AIR = 1.2
@@ -76,20 +77,15 @@ def compute(
     ramp_delta_t = t_max - t_min
 
     # -- geometry ---------------------------------------------------------
-    length = np.maximum(p["length"], 0.1)
     width = np.maximum(p["width"], 0.1)
+    depth = np.maximum(p["depth"], 0.1)
     height = np.maximum(p["height"], 0.1)
 
-    volume = length * width * height
-    floor_area = length * width
-    interior_area = 2.0 * (length * width + length * height + width * height)
-    # The facade is the whole of the longest wall; WWR splits it into glass and opaque.
-    facade_area = np.maximum(length, width) * height
-    glazing_area = facade_area * np.clip(p["wwr"], 0.0, 100.0) / 100.0
-    opaque_facade_area = np.maximum(facade_area - glazing_area, 0.0)
-    ceiling_area = floor_area
-    # Floor and the walls that are not the facade: the only nominally adiabatic ones.
-    residual_area = np.maximum(interior_area - facade_area - ceiling_area, 0.1)
+    volume = width * depth * height
+    floor_area = width * depth
+
+    surface_area = {s.key: s.area(width, depth, height) for s in SURFACES}
+    interior_area = sum(surface_area.values())
 
     # -- thermal capacity -------------------------------------------------
     c_air = RHO_AIR * volume * CP_AIR
@@ -97,10 +93,7 @@ def compute(
 
     added_area = np.maximum(p["added_mass_area"], 0.0)
     added_areal_capacity = mass_mod.effective_areal_capacity(
-        p["added_mass_rho_c"],
-        p["added_mass_thickness"],
-        p["added_mass_k"],
-        ramp_s,
+        p["added_mass_rho_c"], p["added_mass_thickness"], p["added_mass_k"], ramp_s,
         lumped=lumped_mass,
     )
     c_added = added_area * added_areal_capacity * 1000.0
@@ -118,30 +111,58 @@ def compute(
     equipment_w = np.asarray(p["equipment_w_per_m2"], dtype=float) * floor_area
     internal_sensible = np.asarray(p["occupants"], dtype=float) * p["sensible_per_person"] + equipment_w
 
-    # -- steady-state heating, evaluated at the warm setpoint against winter
-    facade_opaque_heat = p["facade_u_opaque"] * opaque_facade_area * (t_max - p["boundary_temp_winter"])
-    facade_glazing_heat = p["facade_u_glazing"] * glazing_area * (t_max - p["boundary_temp_winter"])
-    ceiling_heat = p["ceiling_u"] * ceiling_area * (t_max - p["boundary_temp_winter"])
-    residual_heat = p["residual_u"] * residual_area * (t_max - p["surrounding_temp"])
-    vent_sensible_heat = m_dot_vent * CP_AIR * (t_max - p["vent_supply_temp"])
-    heating_hold = np.maximum(
-        facade_opaque_heat + facade_glazing_heat + ceiling_heat + residual_heat
-        + vent_sensible_heat - internal_sensible,
-        0.0,
-    )
+    # -- envelope, surface by surface -------------------------------------
+    # Each surface faces a temperature blended by its exposure: 1 is outdoors,
+    # 0 is the surrounding lab.  Heating is evaluated at the warm setpoint
+    # against the winter condition and ignores solar (conservative); cooling at
+    # the cold setpoint against summer, including solar through the glazing.
+    t_surround = np.asarray(p["surrounding_temp"], dtype=float)
+    t_winter = np.asarray(p["boundary_temp_winter"], dtype=float)
+    t_summer = np.asarray(p["boundary_temp_summer"], dtype=float)
 
-    # -- steady-state cooling, evaluated at the cold setpoint against summer
-    facade_opaque_cool = p["facade_u_opaque"] * opaque_facade_area * (p["boundary_temp_summer"] - t_min)
-    facade_glazing_cool = p["facade_u_glazing"] * glazing_area * (p["boundary_temp_summer"] - t_min)
-    ceiling_cool = p["ceiling_u"] * ceiling_area * (p["boundary_temp_summer"] - t_min)
-    solar_gain = np.asarray(p["shgc"], dtype=float) * glazing_area * p["solar_irradiance"]
-    residual_cool = p["residual_u"] * residual_area * (p["surrounding_temp"] - t_min)
+    envelope_heat = 0.0
+    envelope_cool = 0.0
+    solar_gain = 0.0
+    envelope_conductance = 0.0
+    glazed_area_total = 0.0
+    per_surface: dict[str, Any] = {}
+
+    for surface in SURFACES:
+        area = surface_area[surface.key]
+        exposure = np.clip(p[f"{surface.key}_exposure"], 0.0, 1.0)
+        glazed = area * np.clip(p[f"{surface.key}_wwr"], 0.0, 100.0) / 100.0
+        opaque = np.maximum(area - glazed, 0.0)
+        conductance = (
+            np.asarray(p[f"{surface.key}_u_opaque"], dtype=float) * opaque
+            + np.asarray(p[f"{surface.key}_u_glazing"], dtype=float) * glazed
+        )
+
+        face_winter = t_surround + exposure * (t_winter - t_surround)
+        face_summer = t_surround + exposure * (t_summer - t_surround)
+
+        heat = conductance * (t_max - face_winter)
+        solar = np.asarray(p[f"{surface.key}_shgc"], dtype=float) * glazed * p[f"{surface.key}_irradiance"]
+        cool = conductance * (face_summer - t_min) + solar
+
+        envelope_heat = envelope_heat + heat
+        envelope_cool = envelope_cool + cool
+        solar_gain = solar_gain + solar
+        envelope_conductance = envelope_conductance + conductance
+        glazed_area_total = glazed_area_total + glazed
+
+        per_surface[f"area_{surface.key}"] = area
+        per_surface[f"glazed_area_{surface.key}"] = glazed
+        per_surface[f"conductance_{surface.key}"] = conductance
+        per_surface[f"heat_{surface.key}"] = heat
+        per_surface[f"cool_{surface.key}"] = cool
+        per_surface[f"solar_{surface.key}"] = solar
+
+    # -- steady-state hold loads ------------------------------------------
+    vent_sensible_heat = m_dot_vent * CP_AIR * (t_max - p["vent_supply_temp"])
+    heating_hold = np.maximum(envelope_heat + vent_sensible_heat - internal_sensible, 0.0)
+
     vent_sensible_cool = m_dot_vent * CP_AIR * (p["vent_supply_temp"] - t_min)
-    cooling_hold = np.maximum(
-        facade_opaque_cool + facade_glazing_cool + ceiling_cool + solar_gain + residual_cool
-        + vent_sensible_cool + internal_sensible,
-        0.0,
-    )
+    cooling_hold = np.maximum(envelope_cool + vent_sensible_cool + internal_sensible, 0.0)
 
     # -- ramp -------------------------------------------------------------
     # For a lumped capacity under a linear ramp, C dT/dt = P - UA(T - T_ext),
@@ -185,7 +206,12 @@ def compute(
     flow_set_by_ventilation = flow_from_ach > flow_from_capacity
 
     # -- radiant check (steady-state hold only) ---------------------------
-    radiant_area = np.maximum(2.0 * floor_area * np.asarray(p["radiant_fraction"], dtype=float) / 100.0, 0.1)
+    # Floor plus roof are the radiant surfaces.
+    radiant_area = np.maximum(
+        (surface_area["floor"] + surface_area["roof"])
+        * np.asarray(p["radiant_fraction"], dtype=float) / 100.0,
+        0.1,
+    )
     radiant_flux_heat = heating_hold / radiant_area
     radiant_flux_cool = cooling_hold / radiant_area
     radiant_heat_ok = radiant_flux_heat <= p["radiant_heat_limit"]
@@ -216,11 +242,8 @@ def compute(
         "volume": volume,
         "floor_area": floor_area,
         "interior_area": interior_area,
-        "facade_area": facade_area,
-        "glazing_area": glazing_area,
-        "opaque_facade_area": opaque_facade_area,
-        "ceiling_area": ceiling_area,
-        "residual_area": residual_area,
+        "glazed_area": glazed_area_total,
+        "envelope_conductance": envelope_conductance,
         # capacity
         "c_air": c_air,
         "c_shell": c_shell,
@@ -240,17 +263,12 @@ def compute(
         # steady state
         "heating_hold": heating_hold,
         "cooling_hold": cooling_hold,
-        "facade_opaque_heat": facade_opaque_heat,
-        "facade_glazing_heat": facade_glazing_heat,
-        "ceiling_heat": ceiling_heat,
-        "residual_heat": residual_heat,
+        "envelope_heat": envelope_heat,
+        "envelope_cool": envelope_cool,
         "vent_sensible_heat": vent_sensible_heat,
-        "facade_opaque_cool": facade_opaque_cool,
-        "facade_glazing_cool": facade_glazing_cool,
-        "ceiling_cool": ceiling_cool,
-        "solar_gain": solar_gain,
-        "residual_cool": residual_cool,
         "vent_sensible_cool": vent_sensible_cool,
+        "solar_gain": solar_gain,
+        **per_surface,
         "internal_sensible": internal_sensible,
         "equipment_w": equipment_w,
         # design

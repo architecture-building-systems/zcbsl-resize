@@ -5,6 +5,7 @@ import pytest
 
 from zcbsl_resize import ChamberParams, compute
 from zcbsl_resize.physics import CP_AIR, RHO_AIR
+from zcbsl_resize.surfaces import SURFACES
 
 
 @pytest.fixture
@@ -15,89 +16,137 @@ def p():
 # ---------------------------------------------------------------- geometry
 
 def test_areas_are_arithmetic_you_can_check_by_hand(p):
+    """Default room: 3.0 wide x 4.0 deep x 2.7 high."""
     r = compute(p)
-    assert r["volume"] == pytest.approx(4.0 * 3.0 * 2.7)
+    assert r["volume"] == pytest.approx(3.0 * 4.0 * 2.7)
     assert r["floor_area"] == pytest.approx(12.0)
-    assert r["interior_area"] == pytest.approx(2 * (12.0 + 4 * 2.7 + 3 * 2.7))
-    assert r["facade_area"] == pytest.approx(4.0 * 2.7)
-    assert r["glazing_area"] == pytest.approx(4.0 * 2.7 * 0.30)
-    assert r["opaque_facade_area"] == pytest.approx(4.0 * 2.7 * 0.70)
-    # Everything not facade and not ceiling is the residual adiabatic set.
-    assert r["residual_area"] == pytest.approx(r["interior_area"] - r["facade_area"] - r["ceiling_area"])
+    # North and south are width x height; east and west are depth x height.
+    assert r["area_north"] == pytest.approx(3.0 * 2.7)
+    assert r["area_south"] == pytest.approx(3.0 * 2.7)
+    assert r["area_east"] == pytest.approx(4.0 * 2.7)
+    assert r["area_west"] == pytest.approx(4.0 * 2.7)
+    assert r["area_roof"] == pytest.approx(12.0)
+    assert r["area_floor"] == pytest.approx(12.0)
+    assert r["interior_area"] == pytest.approx(2 * (12.0 + 3.0 * 2.7 + 4.0 * 2.7))
 
 
-def test_facade_is_the_whole_longest_wall(p):
-    """Whichever of length and width is longer carries the facade."""
-    assert compute(p.replace(length=4.0, width=3.0))["facade_area"] == pytest.approx(4.0 * 2.7)
-    assert compute(p.replace(length=3.0, width=4.0))["facade_area"] == pytest.approx(4.0 * 2.7)
+def test_the_six_surfaces_account_for_the_whole_room():
+    """No residual bucket left over: every square metre belongs to a surface."""
+    r = compute(ChamberParams(width=8.0, depth=4.5, height=12.0))
+    total = sum(r[f"area_{s.key}"] for s in SURFACES)
+    assert total == pytest.approx(r["interior_area"])
 
 
-def test_wwr_splits_the_facade_wall_and_nothing_else(p):
-    """WWR is measured against the whole wall, so the two areas always sum to it."""
-    for wwr in (0.0, 30.0, 100.0):
-        r = compute(p.replace(wwr=wwr))
-        assert r["glazing_area"] == pytest.approx(4.0 * 2.7 * wwr / 100.0)
-        assert r["glazing_area"] + r["opaque_facade_area"] == pytest.approx(r["facade_area"])
+def test_glazing_splits_each_surface_independently(p):
+    """WWR is per surface, so glazing one wall does not glaze another."""
+    r = compute(p.with_surface("east", wwr=50.0))
+    assert r["glazed_area_east"] == pytest.approx(0.5 * 4.0 * 2.7)
+    assert r["glazed_area_west"] == pytest.approx(0.0)
+    assert r["glazed_area_south"] == pytest.approx(0.3 * 3.0 * 2.7)
 
 
 # ---------------------------------------------------------------- steady state
 
 def test_heating_hold_reproduced_by_hand(p):
+    """Default: south wall and roof exterior, the rest facing the lab at 21 C."""
     r = compute(p)
-    a_glaze = 4.0 * 2.7 * 0.30
-    a_opaque = 4.0 * 2.7 * 0.70
-    a_ceiling = 12.0
-    a_residual = r["residual_area"]
-    dt_boundary = 30.0 - (-10.0)
+    # conductance = U_opaque x opaque area + U_glazing x glazed area
+    south = 1.20 * (8.1 * 0.7) + 1.40 * (8.1 * 0.3)
+    roof = 1.20 * 12.0
+    north, east, west, floor = 0.05 * 8.1, 0.05 * 10.8, 0.05 * 10.8, 0.05 * 12.0
 
-    conduction = 1.20 * a_opaque * dt_boundary + 1.40 * a_glaze * dt_boundary + 1.20 * a_ceiling * dt_boundary
-    residual = 0.05 * a_residual * (30.0 - 21.0)
+    exposed = (south + roof) * (30.0 - (-10.0))          # facing the winter design condition
+    interior = (north + east + west + floor) * (30.0 - 21.0)  # facing the lab
     m_dot = 3.0 * r["volume"] * RHO_AIR / 3600.0
     ventilation = m_dot * CP_AIR * (30.0 - 21.0)
     gains = 2 * 75.0 + 25.0 * 12.0
 
-    assert r["heating_hold"] == pytest.approx(conduction + residual + ventilation - gains)
+    assert r["envelope_heat"] == pytest.approx(exposed + interior)
+    assert r["heating_hold"] == pytest.approx(exposed + interior + ventilation - gains)
 
 
 def test_cooling_hold_reproduced_by_hand(p):
     r = compute(p)
-    a_glaze = 4.0 * 2.7 * 0.30
-    a_opaque = 4.0 * 2.7 * 0.70
-    dt_boundary = 35.0 - 16.0
+    south = 1.20 * (8.1 * 0.7) + 1.40 * (8.1 * 0.3)
+    roof = 1.20 * 12.0
+    north, east, west, floor = 0.05 * 8.1, 0.05 * 10.8, 0.05 * 10.8, 0.05 * 12.0
 
-    conduction = 1.20 * a_opaque * dt_boundary + 1.40 * a_glaze * dt_boundary + 1.20 * 12.0 * dt_boundary
-    solar = 0.50 * a_glaze * 700.0
-    residual = 0.05 * r["residual_area"] * (21.0 - 16.0)
+    exposed = (south + roof) * (35.0 - 16.0)
+    interior = (north + east + west + floor) * (21.0 - 16.0)
+    solar = 0.50 * (8.1 * 0.3) * 700.0
     m_dot = 3.0 * r["volume"] * RHO_AIR / 3600.0
     ventilation = m_dot * CP_AIR * (21.0 - 16.0)
     gains = 2 * 75.0 + 25.0 * 12.0
 
-    assert r["cooling_hold"] == pytest.approx(conduction + solar + residual + ventilation + gains)
+    assert r["solar_gain"] == pytest.approx(solar)
+    assert r["cooling_hold"] == pytest.approx(exposed + interior + solar + ventilation + gains)
 
 
-def test_glazing_uses_its_own_u_value(p):
-    """Splitting opaque and glazed U-values was the point of the change."""
-    base = compute(p)
-    worse_glass = compute(p.replace(facade_u_glazing=5.7))
-    assert worse_glass["heating_hold"] > base["heating_hold"]
-    # Changing the opaque U must not move the glazed portion's contribution.
-    only_glass = compute(p.replace(wwr=100.0))
-    assert only_glass["facade_opaque_heat"] == pytest.approx(0.0)
+def test_envelope_conductance_is_the_sum_of_the_surfaces(p):
+    r = compute(p)
+    assert r["envelope_conductance"] == pytest.approx(
+        sum(r[f"conductance_{s.key}"] for s in SURFACES)
+    )
 
 
-def test_ceiling_shares_the_facade_boundary_temperature(p):
-    """By decision: one emulated climate behind both surfaces."""
-    colder = compute(p.replace(boundary_temp_winter=-25.0))
-    base = compute(p)
-    assert colder["ceiling_heat"] > base["ceiling_heat"]
-    assert colder["facade_opaque_heat"] > base["facade_opaque_heat"]
+# ---------------------------------------------------------------- exposure
+
+def test_exposure_blends_between_the_lab_and_outdoors(p):
+    """exposure = 0.5 puts the surface exactly halfway between the two."""
+    cold = compute(p.with_surface("north", u_opaque=1.0, exposure=1.0))["heat_north"]
+    warm = compute(p.with_surface("north", u_opaque=1.0, exposure=0.0))["heat_north"]
+    half = compute(p.with_surface("north", u_opaque=1.0, exposure=0.5))["heat_north"]
+    assert half == pytest.approx(0.5 * (cold + warm))
 
 
-def test_solar_affects_cooling_only(p):
-    sunny = compute(p.replace(solar_irradiance=2000.0))
-    dark = compute(p.replace(solar_irradiance=0.0))
+def test_zero_conductance_makes_a_surface_adiabatic(p):
+    r = compute(p.with_surface("floor", u_opaque=0.0, u_glazing=0.0))
+    assert r["conductance_floor"] == pytest.approx(0.0)
+    assert r["heat_floor"] == pytest.approx(0.0)
+    assert r["cool_floor"] == pytest.approx(0.0)
+
+
+def test_three_exterior_walls_are_not_treated_as_adiabatic():
+    """The climate chamber case. The old one-facade model called 204 m2 of
+    exterior wall adiabatic and understated the envelope by 2.4x."""
+    from zcbsl_resize import rooms
+
+    chamber = rooms.climate_chamber()
+    r = compute(chamber)
+    for wall in ("north", "east", "west"):
+        assert getattr(chamber, f"{wall}_exposure") == 1.0
+        assert r[f"conductance_{wall}"] > 50.0
+    assert chamber.south_exposure == 0.0
+    assert chamber.floor_exposure == 0.0
+    # Envelope conductance must reflect all three exposed walls plus the roof.
+    assert r["envelope_conductance"] > 290.0
+
+
+def test_module_room_facade_is_the_south_wall_not_the_longest():
+    """3.75 wide x 4.50 deep: the facade is the 3.75 m wall, not the 4.50 m one."""
+    from zcbsl_resize import rooms
+
+    r = compute(rooms.module_room())
+    assert r["area_south"] == pytest.approx(3.75 * 5.20)
+    assert r["area_east"] == pytest.approx(4.50 * 5.20)
+    # The exterior one is the south wall.
+    assert r["conductance_south"] > r["conductance_east"]
+
+
+# ---------------------------------------------------------------- gains & solar
+
+def test_solar_is_per_surface_and_affects_cooling_only(p):
+    sunny = compute(p.with_surface("south", irradiance=2000.0))
+    dark = compute(p.with_surface("south", irradiance=0.0))
     assert sunny["cooling_hold"] > dark["cooling_hold"]
     assert sunny["heating_hold"] == pytest.approx(dark["heating_hold"])
+    assert dark["solar_gain"] == pytest.approx(0.0)
+
+
+def test_solar_needs_glazing_to_enter(p):
+    """An opaque wall gains nothing: there is no sol-air correction, by decision."""
+    r = compute(p.with_surface("east", irradiance=1500.0, wwr=0.0))
+    assert r["solar_east"] == pytest.approx(0.0)
 
 
 def test_internal_gains_help_heating_and_hurt_cooling(p):
@@ -228,15 +277,14 @@ def test_high_air_change_rates_govern_the_airflow(p):
     quiet = p.replace(
         ach=20.0,
         ramp_minutes=480.0,
-        base_shell_capacity=5.0,
+        base_shell_capacity=1.0,
         supply_dt=30.0,
         boundary_temp_winter=18.0,
         boundary_temp_summer=24.0,
         vent_supply_temp=21.0,
-        solar_irradiance=0.0,
         equipment_w_per_m2=0.0,
         occupants=0.0,
-    )
+    ).with_surface("south", irradiance=0.0)
     r = compute(quiet)
     assert bool(r["flow_set_by_ventilation"])
     assert r["design_flow_m3s"] == pytest.approx(20.0 * r["volume"] / 3600.0)

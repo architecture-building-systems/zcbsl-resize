@@ -63,8 +63,13 @@ Worth confirming what is actually above it.
 - **Winter heating ignores solar gain** (conservative). Summer cooling includes
   it through SHGC × glazed area × irradiance.
 - **No sol-air correction.** Opaque surfaces are driven by air temperature
-  only. At high irradiance on a dark opaque roof this understates the cooling
-  load, by decision, to keep the input set small.
+  only, so solar enters exclusively through glazing. At high irradiance on a
+  dark opaque roof this understates the cooling load, by decision, to keep the
+  input set small.
+- **Irradiance is a peak figure you supply per surface**, not a computed solar
+  position. The model knows nothing of date, latitude or shading, and applies
+  every surface's peak simultaneously in the cooling case, which cannot happen
+  in reality. That is deliberately conservative.
 - **Latent load** uses ASHRAE psychrometrics from dry-bulb and RH on both
   sides, sized at the cold setpoint. It does not model coil bypass, reheat, or
   moisture buffering in the room's own materials.
@@ -89,9 +94,11 @@ the heat pump only needs the steady hold plus its own recharge duty — about
 
 ## Open items
 
-- Confirm what is actually above the ceiling. It currently sees the same
-  emulated climate as the facade, which is the conservative reading, but if it
-  faces a plant room or the lab the load drops sharply.
+- East and west peak irradiance on the climate chamber is set to 550 W/m2 as an
+  assumption. Only the north figure of 400 W/m2 was given.
+- Every exposed surface takes its peak irradiance at once in the cooling case.
+  For a room with three exposed walls facing different directions that is
+  pessimistic; a real worst hour would have one or two of them near peak.
 - Decide the allowable air-to-surface ΔT. It is the parameter that decides
   whether a ramp target is reachable, and nobody has put a number on it yet.
   15 K is a placeholder.
