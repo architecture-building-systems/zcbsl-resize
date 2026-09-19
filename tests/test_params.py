@@ -83,7 +83,7 @@ def test_clamping_pulls_values_into_range():
 
 
 def test_scenario_round_trip(tmp_path):
-    original = ChamberParams(ramp_minutes=45.0, added_mass_area=18.0)
+    original = ChamberParams(ramp_minutes=45.0, added_mass_coverage=18.0)
     path = save_scenario(original, tmp_path / "s.json", name="test", sweeps={"ramp_minutes": [15, 30, 60]})
     loaded = load_scenario(path)
     assert loaded["params"] == original

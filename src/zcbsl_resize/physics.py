@@ -17,7 +17,9 @@ of it.
 And a fourth, which the original workshop tool missed entirely: heat only
 enters the thermal mass through a surface film of roughly 8 W/m^2K.  That puts
 a hard ceiling on mass-charging power regardless of how large the coil is.  See
-``required_air_surface_dt`` and ``min_feasible_ramp_minutes``.
+``required_air_surface_dt`` and ``min_feasible_ramp_minutes`` -- and note that the
+latter is conditional on the ramp you asked for; :func:`fastest_ramp_minutes`
+is the unconditional answer.
 
 Everything here is numpy-safe.  Pass scalars for one case, or arrays for a
 sweep of millions.
@@ -93,7 +95,7 @@ def compute(
     c_air = RHO_AIR * volume * CP_AIR
     c_shell = interior_area * np.asarray(p["base_shell_capacity"], dtype=float) * 1000.0
 
-    added_area = np.maximum(p["added_mass_area"], 0.0)
+    added_area = np.maximum(p["added_mass_coverage"], 0.0) / 100.0 * interior_area  # added_mass_coverage is % of interior surface
     added_areal_capacity = mass_mod.effective_areal_capacity(
         p["added_mass_rho_c"], p["added_mass_thickness"], p["added_mass_k"], ramp_s,
         lumped=lumped_mass,
@@ -185,6 +187,9 @@ def compute(
     required_air_surface_dt = power_mass / np.maximum(film_conductance, 1e-9)
     max_mass_power = film_conductance * np.asarray(p["max_air_surface_dt"], dtype=float)
     film_ok = required_air_surface_dt <= p["max_air_surface_dt"]
+    # Conditional on the ramp asked for: with added mass, a longer ramp lets
+    # heat reach deeper, so this number moves as you chase it.  The
+    # unconditional answer is fastest_ramp_minutes() below.
     min_feasible_ramp_s = energy_mass / np.maximum(max_mass_power, 1e-9)
     min_feasible_ramp_min = min_feasible_ramp_s / 60.0
 
@@ -276,6 +281,7 @@ def compute(
         "volume": volume,
         "floor_area": floor_area,
         "interior_area": interior_area,
+        "added_mass_area": added_area,
         "glazed_area": glazed_area_total,
         "envelope_conductance": envelope_conductance,
         # capacity
@@ -354,6 +360,121 @@ def compute(
         "free_heating": free_heating,
         "free_cooling": free_cooling,
     }
+
+
+# --------------------------------------------------------------------------
+# The self-consistent fastest ramp
+# --------------------------------------------------------------------------
+#
+# ``min_feasible_ramp_minutes`` above answers a narrower question than its name
+# suggests: *given a ramp of the length you asked for, how long would the
+# fastest one be?*  Those are only the same question when the participating
+# mass does not depend on the ramp.  For the bare shell that holds -- aluminium
+# and glass are thermally thin, so the whole layer participates whatever the
+# timescale -- but as soon as there is added mass it does not.  A longer ramp
+# lets heat diffuse deeper, more mass takes part, and the minimum ramp moves
+# out from under you.
+#
+# So the honest answer is the fixed point: the ramp time that is exactly its
+# own minimum.  Below it the film cannot deliver; above it it can.  Solve
+#
+#     t * h * A * dT_allowed = dT_ramp * C(t)
+#
+# with C(t) = C0 + A_add * rho_c * d_eff(t) and d_eff = min(coeff*sqrt(a t), L).
+# In the unsaturated regime that is a quadratic in sqrt(t); once the layer is
+# fully penetrated C stops moving and it is linear.  ``_fastest_ramp_iterated``
+# solves the same thing by repeated substitution and shares no algebra with it;
+# ``tests/test_physics.py`` checks the two agree.
+
+
+def fastest_ramp_minutes(
+    params: ChamberParams | dict[str, Any],
+    *,
+    lumped_mass: bool = False,
+) -> Any:
+    """The ramp time that equals its own minimum feasible ramp, in minutes.
+
+    This is the room's actual speed limit, and unlike
+    ``compute()["min_feasible_ramp_minutes"]`` it does not depend on the
+    ``ramp_minutes`` you happen to pass in -- that input drops out entirely.
+    Use this one whenever the question is "how fast can this room go".
+
+    Numpy-safe: broadcasts like everything else here.
+    """
+    p = _as_dict(params)
+
+    # Clamped exactly as compute() clamps them, so the two never disagree.
+    width = np.maximum(p["width"], 0.1)
+    depth = np.maximum(p["depth"], 0.1)
+    height = np.maximum(p["height"], 0.1)
+    volume = width * depth * height
+    interior_area = sum(s.area(width, depth, height) for s in SURFACES)
+
+    delta_t = np.abs(
+        np.asarray(p["setpoint_max"], dtype=float) - np.asarray(p["setpoint_min"], dtype=float)
+    )
+
+    # Capacity that does not move with the ramp, J/K.
+    c_fixed = (
+        RHO_AIR * volume * CP_AIR
+        + interior_area * np.asarray(p["base_shell_capacity"], dtype=float) * 1000.0
+    )
+
+    added_area = (np.maximum(np.asarray(p["added_mass_coverage"], dtype=float), 0.0) / 100.0
+                  * interior_area)  # added_mass_coverage is % of interior surface
+    rho_c = np.asarray(p["added_mass_rho_c"], dtype=float) * 1000.0  # kJ/m3K -> J/m3K
+    thickness = np.asarray(p["added_mass_thickness"], dtype=float)
+    alpha = np.asarray(p["added_mass_k"], dtype=float) / np.maximum(rho_c, 1e-9)
+
+    # What the film can push into the mass, W.
+    max_mass_power = np.maximum(
+        np.asarray(p["surface_film_h"], dtype=float)
+        * interior_area
+        * np.asarray(p["max_air_surface_dt"], dtype=float),
+        1e-9,
+    )
+
+    # Fully penetrated: capacity is constant, so the root is linear in t.
+    c_saturated = c_fixed + added_area * rho_c * thickness
+    t_saturated = delta_t * c_saturated / max_mass_power
+
+    if lumped_mass:
+        return t_saturated / 60.0
+
+    # Diffusion-limited: quadratic in u = sqrt(t).
+    b = added_area * rho_c * mass_mod.RAMP_DEPTH_COEFF * np.sqrt(alpha)
+    disc = (delta_t * b) ** 2 + 4.0 * max_mass_power * delta_t * c_fixed
+    u = (delta_t * b + np.sqrt(np.maximum(disc, 0.0))) / (2.0 * max_mass_power)
+    t_diffusing = u * u
+
+    # The layer saturates when the penetration depth reaches its thickness.
+    # C(t) is continuous and increasing, so exactly one branch is consistent.
+    penetration = mass_mod.RAMP_DEPTH_COEFF * np.sqrt(alpha * np.maximum(t_diffusing, 0.0))
+    seconds = np.where(penetration <= thickness, t_diffusing, t_saturated)
+    return np.maximum(seconds, 0.0) / 60.0
+
+
+def _fastest_ramp_iterated(
+    params: ChamberParams | dict[str, Any],
+    *,
+    lumped_mass: bool = False,
+    start_minutes: float = 30.0,
+    iterations: int = 200,
+) -> Any:
+    """Repeated substitution onto ``min_feasible_ramp_minutes``.
+
+    An independent check on :func:`fastest_ramp_minutes`, sharing none of its
+    algebra.  Slow, so it lives here for the tests rather than for use.
+    """
+    p = _as_dict(params)
+    shape = np.broadcast_shapes(*(np.shape(np.asarray(v, dtype=float)) for v in p.values()))
+    t = np.full(shape or (1,), float(start_minutes))
+    for _ in range(iterations):
+        t = np.asarray(
+            compute(p, ramp_minutes=t, lumped_mass=lumped_mass)["min_feasible_ramp_minutes"],
+            dtype=float,
+        )
+    return t
 
 
 RESULT_KEYS: tuple[str, ...] = tuple(compute(ChamberParams()).keys())

@@ -12,13 +12,18 @@
 #                                       the grid holds it at the midpoint
 #   name: {values: [1, 2, 5]}   LIST    explicit values, for non-uniform steps
 #
+# Global sensitivity samples every entry that varies, GRID and BOUNDS alike,
+# over its full range. A GRID entry declares convenient points for a factorial
+# sweep; it does not claim the parameter is known only at those points.
+#
 # Envelope parameters are per surface: <surface>_<property>, where surface is
 # one of north / east / south / west / roof / floor, and property is one of
 # u_opaque / u_glazing / wwr / shgc / irradiance / exposure.
 # Width runs east-west, depth runs north-south.
 #
 # Run `python study/check_config.py` after editing: it validates names and
-# ranges against the model and prints the resulting grid size.
+# ranges against the model, reports anything that stands on top of a value
+# rooms.py sets deliberately, and prints the resulting grid size.
 #
 # Lines marked CONFIRM are assumptions, not your numbers.
 # =============================================================================
@@ -30,58 +35,42 @@ meta:
     the configurations each room can actually take.
 
 # =============================================================================
-# SHARED - operation, plant and delivery limits common to both rooms
+# SHARED - only what is physically ONE value across both rooms
+#
+# Everything else describes a room or an experiment and lives in that room's
+# block, even where the two rooms currently start from the same number. Two
+# rooms agreeing today is not the same as one quantity serving both, and the
+# difference is what stops a single range being stretched across a 120 m2 room
+# and a 447.66 m2 one.
 # =============================================================================
 shared:
 
-  # ---- setpoints and ramp -------------------------------------------------
-  setpoint_min: [10.0, 20.0, 5.0]           # CONFIRM: what range do experiments need?
-  setpoint_max: [24.0, 40.0, 8.0]           # CONFIRM
-  ramp_minutes: {values: [10, 15, 20, 30, 45, 60, 90, 120, 180, 240]}
-  margin_pct: 15.0
-
-  # ---- thermal mass -------------------------------------------------------
-  # Both rooms are lined in aluminium bonded to insulated panels, with glass.
-  # Thermally thin, so the whole layer participates: 7 kJ/m2K.
-  base_shell_capacity: [5.0, 15.0, 2.5]
-  added_mass_area: [0.0, 60.0, 15.0]        # CONFIRM: how much can you install?
-  added_mass_thickness: [0.05, 0.50, null]
-  added_mass_rho_c: 1800.0                  # rammed earth
-  added_mass_k: 1.25
-
-  # ---- ventilation and gains ---------------------------------------------
-  ach: [0.5, 12.0, null]                    # CONFIRM
-  vent_supply_temp: 21.0                    # CONFIRM: is supply air pre-conditioned?
-  vent_supply_rh: 60.0
-  target_rh: [30.0, 70.0, null]
-  occupants: [0.0, 4.0, 2.0]
-  sensible_per_person: 75.0
-  latent_per_person: 45.0
-
-  # ---- delivery limits ----------------------------------------------------
-  radiant_fraction: 60.0                    # CONFIRM: active share of floor + roof
-  radiant_heat_limit: 100.0                 # EN 1264 / ISO 11855
-  radiant_cool_limit: 60.0                  # condensation-limited
-  supply_dt: [8.0, 20.0, null]
-  surface_film_h: 8.0                       # still air; raise if you blow over surfaces
-  max_air_surface_dt: [5.0, 30.0, 5.0]      # THE decisive unknown
-
-  # ---- dedicated heat pump -----------------------------------------------
-  # One machine per room, drawing on the hot and cold expansion tanks. Those
-  # are held at temperature by the 70 kW interface heat pump on the anergy
-  # network, so they are an unlimited SOURCE, not a store: nothing absorbs the
-  # ramp surge and each room's machine carries its full design capacity.
+  # ---- the tanks and the plant that holds them ----------------------------
+  # One pair of expansion tanks serves all four rooms, held at temperature by
+  # the 70 kW interface heat pump on the anergy network. They are an unlimited
+  # SOURCE, not a store: nothing absorbs the ramp surge, so each room's machine
+  # carries its full design capacity.
   tank_temp_hot: 30.0
   tank_temp_cold: 10.0
   exchanger_approach: [1.0, 5.0, 1.0]
   carnot_efficiency: [0.35, 0.60, 0.05]
 
-  # ---- design conditions --------------------------------------------------
+  # ---- the weather and the hall the rooms sit in --------------------------
   boundary_temp_winter: -8.0                # CONFIRM: Zurich design condition?
-  boundary_temp_summer: 32.0                # CONFIRM
+  boundary_temp_summer: 45.0                # Confirmed 2026-09-18: deliberate design margin for
+                                             # hotter summer extremes (climate-change future-proofing),
+                                             # not the historical Zurich condition. rooms.py carries this
+                                             # value directly now, so it is no longer an override.
   boundary_rh: 60.0
   surrounding_temp: 21.0
   pressure_pa: 96500.0                      # Zurich, ~410 m
+
+  # ---- physics of the air-to-surface interface ----------------------------
+  # Still air. Raise it only if you actually blow over the surfaces.
+  surface_film_h: 8.0
+
+  # ---- the margin carried on every capacity -------------------------------
+  margin_pct: 15.0
 
 # =============================================================================
 # ROOMS
@@ -93,9 +82,9 @@ rooms:
     base: module_room        # src/zcbsl_resize/rooms.py
     label: Module room
     notes: >
-      3.75 w x 4.50 d x 5.20 h. South wall and roof exterior; north, east, west
-      walls and floor face the lab. The envelope is exchangeable, so its
-      construction is what this study explores.
+      3.75 w x 4.50 d x 5.20 h, 120 m2 of interior surface. South wall and roof
+      exterior; north, east, west walls and floor face the lab. The envelope is
+      exchangeable, so its construction is what this study explores.
 
     # ---- the exchangeable south facade -------------------------------------
     south_u_opaque: [0.05, 2.50, 0.35]
@@ -107,27 +96,109 @@ rooms:
     # ---- the roof, also exchangeable ---------------------------------------
     roof_u_opaque: [0.05, 2.50, 0.35]
 
-    # ---- internal gains -----------------------------------------------------
+    # ---- setpoints and ramp -------------------------------------------------
+    setpoint_min: [10.0, 20.0, 5.0]         # CONFIRM: what range do experiments need?
+    setpoint_max: [24.0, 40.0, 4.0]         # CONFIRM
+    ramp_minutes: {values: [10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 480]}
+
+    # ---- added thermal mass -------------------------------------------------
+    # base_shell_capacity is deliberately absent: rooms.py fixes it at
+    # 7.0 kJ/m2K for the aluminium-and-glass lining, which is a measured
+    # property of the room, not an unknown. Mass is added on top of it.
+    #
+    # Rammed earth lining the interior, as a SHARE of interior surface --
+    # what decides how hard a room is to charge is capacity per unit of film
+    # area, not a bare m2 figure, which meant something different in each
+    # room (the bug the old shared 0-60 m2 range had). Resolved 2026-09-18:
+    # added_mass_area no longer exists as a settable input at all --
+    # added_mass_coverage (percent of interior surface) is the only way to
+    # set it, and physics.compute() converts it to an area internally using
+    # this room's own interior surface. Both rooms share this exact 0-100%
+    # range on purpose: it is now genuinely the same question for each.
+    # This room's interior surface is 120 m2, so 100% here is 120 m2.
+    added_mass_coverage: [0.0, 100.0, 10.0]
+    added_mass_thickness: [0.05, 0.50, null]
+    added_mass_rho_c: 1800.0                # rammed earth
+    added_mass_k: 1.25
+
+    # ---- ventilation and gains ---------------------------------------------
+    ach: [0.5, 12.0, null]                  # CONFIRM
+    vent_supply_temp: 21.0                  # CONFIRM: is supply air pre-conditioned?
+    vent_supply_rh: 60.0
+    target_rh: [30.0, 70.0, null]
+    occupants: [0.0, 4.0, 2.0]
+    sensible_per_person: 75.0
+    latent_per_person: 45.0
     equipment_w_per_m2: [0.0, 100.0, 25.0]  # CONFIRM: what runs in this room?
+
+    # ---- delivery limits ----------------------------------------------------
+    radiant_fraction: 60.0                  # CONFIRM: active share of floor + roof
+    radiant_heat_limit: 100.0               # EN 1264 / ISO 11855
+    radiant_cool_limit: 60.0                # condensation-limited
+    supply_dt: [8.0, 20.0, 4.0]
+    max_air_surface_dt: [5.0, 30.0, 5.0]    # THE decisive unknown
 
   # ---------------------------------------------------------------------------
   climate_chamber:
     base: climate_chamber    # src/zcbsl_resize/rooms.py
     label: Climate chamber
     notes: >
-      8.00 w x 4.50 d x 12.00 h. North, east and west walls exterior, each with
-      40% clerestory glazing in xenon-filled insulated glass extrusions. South
-      wall and floor face interior space. Roof exterior. The envelope is fixed.
+      10.5 w x 6.9 d x 8.7 h (corrected 2026-09-18, was wrongly 8.00 x 4.50 x
+      12.00), 447.66 m2 of interior surface. North, east and
+      west walls exterior, each with 40% clerestory glazing in xenon-filled
+      insulated glass extrusions. South wall and floor face interior space.
+      Roof exterior. The envelope is fixed.
       Houses the Artificial Sun: 1200 W/m2 over 8.75 m2 = 10 500 W of light,
-      291.7 W/m2 over the 36 m2 floor. LED cooling is extracted separately.
+      144.9 W/m2 over the 72.45 m2 floor. LED cooling is extracted separately.
 
     # Envelope is fixed and comes from rooms.py. Nothing to sweep here.
     # East and west peak irradiance (550 W/m2) is an ASSUMPTION - only the
     # north figure of 400 W/m2 was given. CONFIRM.
 
+    # ---- setpoints and ramp -------------------------------------------------
+    setpoint_min: [0.0, 20.0, 5.0]         # CONFIRM
+    setpoint_max: [25.0, 45.0, 5.0]         # CONFIRM
+    ramp_minutes: {values: [10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 480]}
+
+    # ---- added thermal mass -------------------------------------------------
+    # Resolved 2026-09-18: same fix as the module room, and the same
+    # 0-100% coverage range, on purpose -- see that room's comment for why.
+    # This room's interior surface is 447.66 m2 (corrected geometry,
+    # 2026-09-18), so 100% here is a very different absolute area than the
+    # module room's 120 m2 -- 40% coverage is 179 m2 of pad, nowhere near
+    # the 12 m2 physical concrete pad the worst-case notebook actually
+    # models. That is expected: this range is what global sensitivity
+    # explores, not a claim that 179 m2 of added mass is buildable.
+    added_mass_coverage: [0.0, 100.0, 10.0]
+    added_mass_thickness: 0.50
+    added_mass_rho_c: 1800.0                # rammed earth
+    added_mass_k: 1.25
+
+    # ---- ventilation and gains ---------------------------------------------
+    # Resolved 2026-09-18: this room is never occupied, but a standing
+    # refresh is wanted anyway, so the floor moves up from the model's
+    # generic 0.5 to a real 1.0 -- this room's ACH never goes below that.
+    ach: [1.0, 11.0, 2.0]                   # was BOUNDS [0.5, 12.0]; now GRID with a real floor
+    # Resolved 2026-09-18: was fixed at the shared 21 C placeholder, which
+    # disagreed with the worst-case notebook's 18 C assumption. Now a real
+    # sweep instead of a guess either way.
+    vent_supply_temp: [12.0, 22.0, 2.0]     # was fixed at 21.0
+    vent_supply_rh: 60.0
+    target_rh: [30.0, 70.0, null]
+    occupants: [0.0, 4.0, 2.0]
+    sensible_per_person: 75.0
+    latent_per_person: 45.0
+
     # The Sun on or off is a scenario, not a slider: with 10.5 kW of light the
     # room never needs heating, so the heating design case is Sun-off.
-    equipment_w_per_m2: {values: [0.0, 291.7]}
+    equipment_w_per_m2: {values: [0.0, 144.9275]}   # 10 500 W / 72.45 m2 (corrected floor area, 2026-09-18)
+
+    # ---- delivery limits ----------------------------------------------------
+    radiant_fraction: 0.0                  # CONFIRM
+    radiant_heat_limit: 100.0               # EN 1264 / ISO 11855
+    radiant_cool_limit: 60.0                # condensation-limited
+    supply_dt: [8.0, 20.0, 4.0]
+    max_air_surface_dt: [5.0, 30.0, 5.0]    # THE decisive unknown
 
 # =============================================================================
 # WHAT TO RUN
@@ -137,12 +208,13 @@ study:
   outputs:
     - heating_design           # air-side coil, W
     - cooling_design
-    - plant_heating            # dedicated heat pump, W
-    - plant_cooling
+    - hp_heating               # dedicated heat pump, W
+    - hp_cooling
     - design_flow_ls
     - latent_design
     - required_air_surface_dt
-    - min_feasible_ramp_minutes
+    - fastest_ramp_minutes     # self-consistent; see physics.fastest_ramp_minutes
+    - film_ok
     - radiant_flux_cool
     - envelope_conductance
     - cop_heating
@@ -154,7 +226,7 @@ study:
   # Factorial grids. Keep each to 2-3 axes; check_config.py prints the row count.
   grids:
     feasibility:
-      axes: [ramp_minutes, added_mass_area, base_shell_capacity]
+      axes: [ramp_minutes, added_mass_coverage]
     envelope:
       axes: [south_wwr, south_u_opaque, south_irradiance]
     heat_pump:
@@ -162,12 +234,17 @@ study:
     operation:
       axes: [setpoint_min, setpoint_max, equipment_w_per_m2]
 
-  # Global sensitivity: samples the full space rather than gridding it, so
-  # interactions and the film threshold are not missed.
-  morris:
-    trajectories: 200
-    levels: 8
+  # Global sensitivity. Saltelli sampling over every entry that varies, giving
+  # first-order and total-order Sobol indices; ST - S1 is the interaction that
+  # a one-at-a-time sweep cannot see. Cost is n x (k + 2) model evaluations,
+  # which for this model is seconds.
+  sobol:
+    n: 4096
     seed: 20260918
+    targets:
+      - cooling_design         # the sizing number
+      - heating_design         # different drivers; chamber needs the Sun-off scenario
+      - fastest_ramp_minutes   # the ramp
 
   # Envelope of achievable values per room: Latin hypercube over everything not
   # fixed, to report honest min/max ranges.

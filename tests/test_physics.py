@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from zcbsl_resize import ChamberParams, compute
-from zcbsl_resize.physics import CP_AIR, RHO_AIR
+from zcbsl_resize import ChamberParams, compute, fastest_ramp_minutes
+from zcbsl_resize.physics import CP_AIR, RHO_AIR, _fastest_ramp_iterated
 from zcbsl_resize.surfaces import SURFACES
 
 
@@ -216,15 +216,15 @@ def test_minimum_feasible_ramp_is_self_consistent(p):
 
 
 def test_heavy_mass_makes_short_ramps_unreachable(p):
-    heavy = p.replace(added_mass_area=40.0, added_mass_thickness=0.3, ramp_minutes=15.0)
+    heavy = p.replace(added_mass_coverage=40.0, added_mass_thickness=0.3, ramp_minutes=15.0)
     r = compute(heavy)
     assert not bool(r["film_ok"])
     assert r["min_feasible_ramp_minutes"] > 15.0
 
 
 def test_a_better_film_raises_the_ceiling(p):
-    still_air = compute(p.replace(added_mass_area=20.0))
-    forced = compute(p.replace(added_mass_area=20.0, surface_film_h=16.0))
+    still_air = compute(p.replace(added_mass_coverage=20.0))
+    forced = compute(p.replace(added_mass_coverage=20.0, surface_film_h=16.0))
     assert forced["min_feasible_ramp_minutes"] == pytest.approx(
         still_air["min_feasible_ramp_minutes"] / 2.0
     )
@@ -233,7 +233,7 @@ def test_a_better_film_raises_the_ceiling(p):
 # ---------------------------------------------------------------- mass model
 
 def test_thick_mass_is_diffusion_limited_not_lumped(p):
-    heavy = p.replace(added_mass_area=20.0)
+    heavy = p.replace(added_mass_coverage=20.0)
     limited = compute(heavy)
     lumped = compute(heavy, lumped_mass=True)
     assert lumped["power_mass"] > 4 * limited["power_mass"]
@@ -412,3 +412,91 @@ def test_every_result_is_finite_across_the_whole_parameter_space(p):
         if arr.dtype == bool:
             continue
         assert np.all(np.isfinite(arr)), f"{key} produced non-finite values"
+
+
+# ------------------------------------------------- the self-consistent ramp
+
+def test_reported_minimum_ramp_is_only_self_consistent_without_added_mass(p):
+    """The trap this model sets, pinned so nobody walks into it twice.
+
+    ``min_feasible_ramp_minutes`` is conditional on the ramp it was given.
+    With no added mass the shell is thermally thin and the two coincide, which
+    is why the older self-consistency test passes.  Add mass and re-running at
+    the reported minimum overshoots the allowance, because the longer ramp let
+    heat reach deeper and recruited capacity that was not in the first answer.
+    """
+    bare = compute(p)
+    at_limit = compute(p, ramp_minutes=bare["min_feasible_ramp_minutes"])
+    assert at_limit["required_air_surface_dt"] == pytest.approx(p.max_air_surface_dt, rel=1e-6)
+
+    massive = p.replace(added_mass_coverage=60.0)
+    first = compute(massive)
+    second = compute(massive, ramp_minutes=first["min_feasible_ramp_minutes"])
+    assert second["required_air_surface_dt"] > p.max_air_surface_dt
+    assert second["min_feasible_ramp_minutes"] > first["min_feasible_ramp_minutes"]
+
+
+def test_fastest_ramp_is_a_true_fixed_point(p):
+    for area in (0.0, 15.0, 60.0, 150.0):
+        params = p.replace(added_mass_coverage=area)
+        t_star = float(np.atleast_1d(fastest_ramp_minutes(params))[0])
+        at_star = compute(params, ramp_minutes=t_star)
+        assert at_star["min_feasible_ramp_minutes"] == pytest.approx(t_star, rel=1e-9)
+        assert at_star["required_air_surface_dt"] == pytest.approx(p.max_air_surface_dt, rel=1e-9)
+
+
+def test_fastest_ramp_ignores_the_ramp_it_is_handed(p):
+    """The input ramp drops out of the fixed point entirely."""
+    massive = p.replace(added_mass_coverage=60.0)
+    answers = [
+        float(np.atleast_1d(fastest_ramp_minutes(massive.replace(ramp_minutes=t)))[0])
+        for t in (1.0, 30.0, 480.0)
+    ]
+    assert answers[0] == pytest.approx(answers[1], rel=1e-12)
+    assert answers[1] == pytest.approx(answers[2], rel=1e-12)
+
+
+def test_fastest_ramp_closed_form_matches_repeated_substitution(p):
+    """Two solvers, no shared algebra, across both diffusion regimes."""
+    for thickness in (0.02, 0.30):          # thin saturates, thick does not
+        for area in (0.0, 30.0, 120.0):
+            params = p.replace(added_mass_coverage=area, added_mass_thickness=thickness)
+            closed = float(np.atleast_1d(fastest_ramp_minutes(params))[0])
+            iterated = float(np.atleast_1d(_fastest_ramp_iterated(params))[0])
+            assert closed == pytest.approx(iterated, rel=1e-8), (thickness, area)
+
+
+def test_fastest_ramp_picks_the_right_diffusion_branch(p):
+    """A thin layer saturates, and then behaves as a lumped capacity."""
+    thin = p.replace(added_mass_coverage=60.0, added_mass_thickness=0.01)
+    assert fastest_ramp_minutes(thin) == pytest.approx(
+        fastest_ramp_minutes(thin, lumped_mass=True), rel=1e-9
+    )
+    thick = p.replace(added_mass_coverage=60.0, added_mass_thickness=0.60)
+    assert fastest_ramp_minutes(thick) < fastest_ramp_minutes(thick, lumped_mass=True)
+
+
+def test_fastest_ramp_broadcasts(p):
+    areas = np.array([0.0, 30.0, 60.0, 120.0])
+    out = fastest_ramp_minutes(p.replace(added_mass_coverage=areas))
+    assert out.shape == (4,)
+    assert np.all(np.diff(out) > 0)
+
+
+def test_fastest_ramp_is_size_independent_at_equal_coverage():
+    """Both rooms, same fraction of interior surface lined, same speed limit.
+
+    The area cancels out of capacity-over-film-conductance for the shell and
+    for the lining alike.  Only the air term fails to cancel, which is why
+    these agree to within a minute rather than exactly.
+    """
+    from zcbsl_resize import rooms
+
+    for coverage in (0.0, 0.25, 0.50):
+        answers = []
+        for key in ("module_room", "climate_chamber"):
+            room = rooms.get(key)
+            answers.append(float(np.atleast_1d(
+                fastest_ramp_minutes(room.replace(added_mass_coverage=coverage * 100.0))
+            )[0]))
+        assert abs(answers[0] - answers[1]) < 4.0, (coverage, answers)

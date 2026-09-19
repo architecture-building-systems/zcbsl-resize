@@ -2,6 +2,7 @@
 
 import json
 
+import numpy as np
 import pytest
 
 from zcbsl_resize.params import ChamberParams
@@ -65,7 +66,7 @@ def test_inverted_setpoints_are_reported_as_a_problem(client):
 
 def test_lumped_comparison_is_returned_for_the_ui_callout(client):
     payload = client.post(
-        "/api/compute", json={"params": ChamberParams(added_mass_area=20.0).to_dict()}
+        "/api/compute", json={"params": ChamberParams(added_mass_coverage=20.0).to_dict()}
     ).get_json()
     assert payload["lumped"]["power_mass"] > payload["results"]["power_mass"]
 
@@ -77,3 +78,52 @@ def test_scenario_endpoint_round_trips(client):
     assert payload["format"] == 1
     assert payload["name"] == "slow ramp"
     assert payload["params"]["ramp_minutes"] == 90
+
+
+# --------------------------------------------------- the ramp the browser shows
+
+def test_compute_payload_carries_the_self_consistent_ramp(client):
+    """The browser must not show the conditional figure as "fastest reachable".
+
+    ``min_feasible_ramp_minutes`` depends on the ramp it was handed. With added
+    mass the two diverge, and the tile that says "Fastest reachable ramp" has to
+    be the fixed point.
+    """
+    from zcbsl_resize import ChamberParams, fastest_ramp_minutes
+
+    params = ChamberParams(added_mass_coverage=60.0, ramp_minutes=30.0)
+    payload = client.post("/api/compute", json={"params": params.to_dict()}).get_json()
+
+    expected = float(np.atleast_1d(fastest_ramp_minutes(params))[0])
+    assert payload["results"]["fastest_ramp_minutes"] == pytest.approx(expected, rel=1e-9)
+    assert payload["sweep"]["fastest_ramp_minutes"] == pytest.approx(expected, rel=1e-9)
+
+    # And they really are different here, or the test proves nothing.
+    conditional = payload["results"]["min_feasible_ramp_minutes"]
+    assert expected > conditional * 1.4
+
+
+def test_the_unreachable_band_is_not_read_off_the_shortest_ramp(client):
+    """The old bug: the sweep reported its first row, at a 5-minute ramp.
+
+    Almost no added mass participates in five minutes, so the boundary came out
+    far too optimistic and the chart's unreachable band was drawn too narrow.
+    """
+    from zcbsl_resize import ChamberParams, compute
+
+    params = ChamberParams(added_mass_coverage=60.0)
+    payload = client.post("/api/compute", json={"params": params.to_dict()}).get_json()
+
+    at_five_minutes = float(compute(params, ramp_minutes=5.0)["min_feasible_ramp_minutes"])
+    assert payload["sweep"]["fastest_ramp_minutes"] > at_five_minutes * 2
+
+
+def test_a_bare_room_shows_the_same_number_either_way(client):
+    """With no added mass the shell is thermally thin and the two coincide."""
+    from zcbsl_resize import ChamberParams
+
+    params = ChamberParams(added_mass_coverage=0.0)
+    results = client.post("/api/compute", json={"params": params.to_dict()}).get_json()["results"]
+    assert results["fastest_ramp_minutes"] == pytest.approx(
+        results["min_feasible_ramp_minutes"], rel=1e-9
+    )

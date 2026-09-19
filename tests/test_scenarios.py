@@ -61,7 +61,7 @@ def test_a_million_cases_stay_fast():
     start = time.perf_counter()
     df = grid_sweep(
         ChamberParams(),
-        {"ramp_minutes": np.linspace(5, 480, 1000), "added_mass_area": np.linspace(0, 100, 1000)},
+        {"ramp_minutes": np.linspace(5, 480, 1000), "added_mass_coverage": np.linspace(0, 100, 1000)},
         outputs=["heating_design", "cooling_design", "min_feasible_ramp_minutes", "film_ok"],
     )
     elapsed = time.perf_counter() - start
@@ -90,9 +90,9 @@ def test_one_at_a_time_covers_every_requested_parameter():
 
 
 def test_sensitivity_ranking_puts_mass_and_ramp_on_top():
-    ranked = sensitivity_ranking(ChamberParams(added_mass_area=20.0), points=9)
+    ranked = sensitivity_ranking(ChamberParams(added_mass_coverage=20.0), points=9)
     top = set(ranked.head(4)["parameter"])
-    assert {"added_mass_area", "base_shell_capacity", "ramp_minutes"} & top
+    assert {"added_mass_coverage", "base_shell_capacity", "ramp_minutes"} & top
 
 
 def test_latin_hypercube_stays_inside_its_ranges():
@@ -112,13 +112,13 @@ def test_latin_hypercube_is_reproducible():
 
 def test_scenario_file_drives_a_sweep(tmp_path):
     path = save_scenario(
-        ChamberParams(added_mass_area=15.0),
+        ChamberParams(added_mass_coverage=15.0),
         tmp_path / "s.json",
         sweeps={"ramp_minutes": [20, 40, 80]},
     )
     df = run_scenario_file(path)
     assert len(df) == 3
-    assert (df["added_mass_area"] == 15.0).all()
+    assert (df["added_mass_coverage"] == 15.0).all()
 
 
 def test_evaluate_without_overrides_gives_one_row():
@@ -126,8 +126,8 @@ def test_evaluate_without_overrides_gives_one_row():
 
 
 def test_lumped_mode_is_carried_through_the_sweep():
-    limited = grid_sweep(ChamberParams(added_mass_area=20.0), {"ramp_minutes": [30]})
-    lumped = grid_sweep(ChamberParams(added_mass_area=20.0), {"ramp_minutes": [30]}, lumped_mass=True)
+    limited = grid_sweep(ChamberParams(added_mass_coverage=20.0), {"ramp_minutes": [30]})
+    lumped = grid_sweep(ChamberParams(added_mass_coverage=20.0), {"ramp_minutes": [30]}, lumped_mass=True)
     assert lumped["power_mass"].iloc[0] > limited["power_mass"].iloc[0]
 
 

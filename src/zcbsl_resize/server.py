@@ -18,7 +18,7 @@ import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 
 from .params import ChamberParams, schema
-from .physics import compute
+from .physics import compute, fastest_ramp_minutes
 from .scenarios import ramp_sweep
 
 WEB_DIR = "web"
@@ -72,6 +72,15 @@ def create_app() -> Flask:
         results = compute(params)
         lumped = compute(params, lumped_mass=True)
         sweep = ramp_sweep(params)
+
+        # The speed limit the room actually has.  results["min_feasible_ramp_minutes"]
+        # answers a narrower question -- what the minimum would be *given the ramp
+        # you asked for* -- and with added mass the two are not the same, because a
+        # longer ramp reaches deeper and recruits more capacity.  The browser shows
+        # the fixed point; see physics.fastest_ramp_minutes.
+        results = dict(results)
+        results["fastest_ramp_minutes"] = fastest_ramp_minutes(params)
+
         return jsonify(
             {
                 "params": params.to_dict(),
@@ -86,7 +95,10 @@ def create_app() -> Flask:
                     "ramp_minutes": sweep["ramp_minutes"].tolist(),
                     "heating_design": sweep["heating_design"].tolist(),
                     "cooling_design": sweep["cooling_design"].tolist(),
-                    "min_feasible_ramp_minutes": float(sweep["min_feasible_ramp_minutes"].iloc[0]),
+                    # Was sweep["min_feasible_ramp_minutes"].iloc[0] -- the value at
+                    # the *shortest* ramp in the sweep, where almost no added mass
+                    # participates, so the unreachable band was drawn far too narrow.
+                    "fastest_ramp_minutes": float(np.asarray(fastest_ramp_minutes(params)).item()),
                 },
             }
         )

@@ -3,11 +3,11 @@
   "name": "Climate chamber, as built",
   "notes": "North, east and west walls exterior with 40% clerestory; south wall and floor interior; roof exterior. Artificial Sun on at full output.",
   "params": {
-    "width": 8.0,
-    "depth": 4.5,
-    "height": 12.0,
+    "width": 10.5,
+    "depth": 6.9,
+    "height": 8.7,
     "base_shell_capacity": 7.0,
-    "added_mass_area": 0.0,
+    "added_mass_coverage": 0.0,
     "added_mass_thickness": 0.3,
     "added_mass_rho_c": 1800.0,
     "added_mass_k": 1.25,
@@ -48,7 +48,7 @@
     "floor_irradiance": 0.0,
     "floor_exposure": 0.0,
     "boundary_temp_winter": -8.0,
-    "boundary_temp_summer": 32.0,
+    "boundary_temp_summer": 45.0,
     "boundary_rh": 60.0,
     "surrounding_temp": 21.0,
     "setpoint_min": 16.0,
@@ -62,7 +62,7 @@
     "occupants": 2.0,
     "sensible_per_person": 75.0,
     "latent_per_person": 45.0,
-    "equipment_w_per_m2": 291.6666666666667,
+    "equipment_w_per_m2": 144.92753623188406,
     "radiant_fraction": 60.0,
     "radiant_heat_limit": 100.0,
     "radiant_cool_limit": 60.0,
@@ -74,17 +74,5 @@
     "exchanger_approach": 3.0,
     "carnot_efficiency": 0.5,
     "pressure_pa": 96500.0
-  },
-  "sweeps": {
-    "ramp_minutes": [
-      10.0,
-      15.0,
-      20.0,
-      30.0,
-      45.0,
-      60.0,
-      90.0,
-      120.0
-    ]
   }
 }

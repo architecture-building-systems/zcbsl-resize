@@ -1,3 +1,4 @@
 -r requirements.txt
 # optional: independent psychrometrics cross-check (tests skip if absent)
 psychrolib>=2.5
+matplotlib>=3.7   # notebooks/01_sensitivity.ipynb

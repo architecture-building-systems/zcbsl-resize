@@ -139,8 +139,9 @@ PARAMS: list[Param] = [
     Param("base_shell_capacity", "mass", "Baseline shell capacitance", "kJ/m²K", 1.0, 200.0, 0.5, 1,
           "The bare shell spread over all interior surfaces, fully participating. "
           "Aluminium on insulation ≈5-9 · glass ≈13 · gypsum ≈40 · masonry ≈150."),
-    Param("added_mass_area", "mass", "Added mass: area", "m²", 0.0, 400.0, 1.0, 0,
-          "Surface area the deliberate mass element covers. Zero disables the whole added-mass term."),
+    Param("added_mass_coverage", "mass", "Added mass: coverage", "%", 0.0, 100.0, 10.0, 0,
+          "Share of interior surface the deliberate mass element covers, converted to an area via "
+          "this room's own interior surface. Zero disables the whole added-mass term."),
     Param("added_mass_thickness", "mass", "Added mass: thickness", "m", 0.005, 1.0, 0.005, 3,
           "Physical depth of the layer. Only the part heat reaches within the ramp counts."),
     Param("added_mass_rho_c", "mass", "Added mass: ρc", "kJ/m³K", 200.0, 4500.0, 10.0, 0,
@@ -318,7 +319,7 @@ class ChamberParams:
 
     # thermal mass
     base_shell_capacity: float = 15.0
-    added_mass_area: float = 0.0
+    added_mass_coverage: float = 0.0
     added_mass_thickness: float = 0.30
     added_mass_rho_c: float = 1800.0
     added_mass_k: float = 1.25
@@ -401,6 +402,16 @@ class ChamberParams:
     pressure_pa: float = 96500.0
 
     # -- conversion helpers ----------------------------------------------
+
+    @property
+    def interior_area(self) -> float:
+        """Total interior surface, m2. Pure geometry, independent of any sweep.
+
+        Lets a caller convert a real area (a 12 m2 pad) into the
+        ``added_mass_coverage`` percent this room needs to reproduce it,
+        without running a full ``compute()`` first.
+        """
+        return 2.0 * (self.width * self.height + self.depth * self.height + self.width * self.depth)
 
     def to_dict(self) -> dict[str, float]:
         return asdict(self)

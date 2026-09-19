@@ -3,12 +3,13 @@
 Quick start::
 
     from zcbsl_resize import ChamberParams, compute
-    r = compute(ChamberParams(ramp_minutes=45, added_mass_area=20))
+    r = compute(ChamberParams(ramp_minutes=45, added_mass_coverage=20))
     print(r["heating_design"] / 1000, "kW")
 """
 
 from .params import ChamberParams, DEFAULTS, MASS_PRESETS, PARAMS, load_scenario, save_scenario, schema
-from .physics import compute
+from . import sensitivity, study
+from .physics import compute, fastest_ramp_minutes
 
 __all__ = [
     "ChamberParams",
@@ -16,6 +17,9 @@ __all__ = [
     "MASS_PRESETS",
     "PARAMS",
     "compute",
+    "fastest_ramp_minutes",
+    "sensitivity",
+    "study",
     "load_scenario",
     "save_scenario",
     "schema",

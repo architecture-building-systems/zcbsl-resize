@@ -46,7 +46,7 @@ save and load write and read the same JSON format the Python API uses.
 ## Use it as a library
 
 ```python
-from zcbsl_resize import ChamberParams, compute, rooms
+from zcbsl_resize import ChamberParams, compute, fastest_ramp_minutes, rooms
 
 r = compute(rooms.climate_chamber())          # a real room, as built
 params = rooms.module_room().replace(ramp_minutes=45, added_mass_area=20)
@@ -54,7 +54,8 @@ r = compute(params)
 
 print(r["heating_design"] / 1000, "kW at the coil")
 print(r["cop_cooling"], "COP on the cooling duty")
-print(r["min_feasible_ramp_minutes"], "min is the fastest the surface film allows")
+print(r["min_feasible_ramp_minutes"], "min, given the ramp you asked for")
+print(fastest_ramp_minutes(params), "min is the room's actual speed limit")
 ```
 
 Every input accepts a numpy array, and every output broadcasts, so a sweep is
@@ -89,9 +90,21 @@ purpose.
 ## The study configuration
 
 `study/rooms.yaml` describes both rooms and what to sweep, starting from the
-baselines in `rooms.py` so only what varies appears in the file.
-`python study/check_config.py` validates it against the model and prints the
-size of each grid before you run one.
+baselines in `rooms.py` so only what varies appears in the file. Its `shared:`
+block holds only what is physically one value across both rooms — the tanks,
+the weather, the film, the margin. Everything else is a room or an experiment
+property and lives in that room's block, even where the two currently agree.
+
+`python study/check_config.py` validates it against the model, prints the size
+of each grid before you run one, and names anything standing on top of a value
+`rooms.py` sets deliberately. That last check exists because a room's baseline
+is not a suggestion: the shell is 7.0 kJ/m²K because the room is lined in
+aluminium, and a config sweeping 5 to 15 has replaced a measurement with a
+guess. `rooms.MEASURED` is where each room says which of its values are
+measurements and which are placeholders waiting to be swept.
+
+The parsing lives in `zcbsl_resize.study`, so the checker and the notebooks
+cannot drift apart in how they read the same file.
 
 ## Trusting the numbers
 

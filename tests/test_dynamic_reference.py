@@ -80,9 +80,9 @@ def test_closed_form_peak_matches_the_integrated_model():
 
 
 @pytest.mark.parametrize("ramp", [10.0, 30.0, 90.0, 240.0])
-@pytest.mark.parametrize("mass_area", [0.0, 20.0])
-def test_peak_matches_across_ramp_times_and_mass(ramp, mass_area):
-    p = ChamberParams(ramp_minutes=ramp, added_mass_area=mass_area)
+@pytest.mark.parametrize("mass_coverage", [0.0, 20.0])
+def test_peak_matches_across_ramp_times_and_mass(ramp, mass_coverage):
+    p = ChamberParams(ramp_minutes=ramp, added_mass_coverage=mass_coverage)
     r = compute(p)
     _, power = single_node_required_power(p, float(r["c_total"]), steps=2000)
     assert power.max() == pytest.approx(r["heating_hold"] + r["power_mass"], rel=1e-4)

@@ -9,7 +9,7 @@ pandas DataFrame with the inputs and the results side by side.
 
     df = grid_sweep(
         ChamberParams(),
-        {"ramp_minutes": [15, 30, 60, 120], "added_mass_area": [0, 10, 20, 40]},
+        {"ramp_minutes": [15, 30, 60, 120], "added_mass_coverage": [0, 10, 20, 40]},
     )
     df.plot(x="ramp_minutes", y="heating_design")
 """
@@ -93,7 +93,7 @@ def grid_sweep(
     """Full factorial over ``axes``. One row per combination.
 
     ``axes`` maps parameter names to the values to try, e.g.
-    ``{"ramp_minutes": [15, 30, 60], "added_mass_area": [0, 20]}`` gives 6 rows.
+    ``{"ramp_minutes": [15, 30, 60], "added_mass_coverage": [0, 20]}`` gives 6 rows.
     """
     _validate_keys(axes)
     if not axes:

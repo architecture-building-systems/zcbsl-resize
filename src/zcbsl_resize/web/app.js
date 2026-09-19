@@ -236,6 +236,16 @@
     node.textContent = fmt(state[p.key], p.decimals) + unit;
   }
 
+  function renderAddedMassReadout(r) {
+    // added_mass_coverage is the settable input (% of interior surface); the
+    // room-specific area it actually works out to only exists once the
+    // server has computed it, so this is filled in after render() rather
+    // than by the generic per-field slider label.
+    var node = el("val-added_mass_coverage");
+    if (!node) return;
+    node.textContent = fmt(state.added_mass_coverage, 0) + " % \u2192 " + fmt(r.added_mass_area, 1) + " m\u00b2";
+  }
+
   function syncAllLabels() { schema.params.forEach(syncLabel); }
 
   function setValue(key, value) {
@@ -329,9 +339,9 @@
       r.free_cooling ? "no compressor needed \u2014 direct from the cold tank"
                      : "lift " + fmt(r.lift_cooling, 0) + " K \u00b7 " + kW(r.electric_cooling) + " kW electric",
       "Same calculation for the cooling duty, lifting from the supply temperature up to the cold tank.");
-    html += statTile("neutral", "Fastest reachable ramp", fmt(r.min_feasible_ramp_minutes, 0), "min",
+    html += statTile("neutral", "Fastest reachable ramp", fmt(r.fastest_ramp_minutes, 0), "min",
       "at " + fmt(state.max_air_surface_dt, 0) + " K air-to-surface allowance",
-      "The shortest ramp the surface film physically permits for this much mass. Asking for less than this cannot work regardless of equipment.");
+      "The shortest ramp the surface film physically permits, solved self-consistently: a longer ramp lets heat reach deeper into the mass, so the answer has to be the ramp time that equals its own minimum. Asking for less than this cannot work regardless of equipment.");
     el("stat-grid").innerHTML = html;
   }
 
@@ -355,7 +365,7 @@
       kW(r.cooling_hold) + " kW</b> needed just to hold " + fmt(r.setpoint_min, 0) +
       "°C against the summer boundary " + ratioPhrase(r.power_mass, r.cooling_hold) + "</div>";
 
-    if (state.added_mass_area > 0) {
+    if (state.added_mass_coverage > 0) {
       var overstate = data.lumped.power_mass / (r.power_mass || 1);
       html += '<div class="insight accent span-2">Heat reaches <b>' + fmt(r.added_penetration_mm, 0) +
         " mm</b> into the added mass during a " + fmt(r.ramp_minutes, 0) + "-minute ramp, so <b>" +
@@ -372,7 +382,7 @@
         " minutes, the air would have to sit <b>" + fmt(r.required_air_surface_dt, 0) +
         " K</b> away from the surfaces, against your <b>" + fmt(state.max_air_surface_dt, 0) +
         " K</b> allowance. This ramp is not reachable by adding capacity. The shortest ramp the film permits here is <b>" +
-        fmt(r.min_feasible_ramp_minutes, 0) + " minutes</b>; reducing mass or relaxing the setpoint range are the other levers." +
+        fmt(r.fastest_ramp_minutes, 0) + " minutes</b>; reducing mass or relaxing the setpoint range are the other levers." +
         infoIcon("Mass-charging power is capped at h &times; interior area &times; the air-to-surface &Delta;T you allow. With h &asymp; 8 W/m&sup2;K this ceiling binds long before the coil does.") +
         "</div>";
     }
@@ -445,7 +455,7 @@
     });
 
     var unreachable = "";
-    var limit = Math.min(sweep.min_feasible_ramp_minutes, maxT);
+    var limit = Math.min(sweep.fastest_ramp_minutes, maxT);
     if (limit > sweep.ramp_minutes[0]) {
       unreachable = '<rect x="' + padL + '" y="' + padT + '" width="' + Math.max(x(limit) - padL, 0).toFixed(1) +
         '" height="' + plotH + '" fill="var(--crit)" opacity="0.13"/>' +
@@ -555,7 +565,7 @@
     html += checkCard("Mass charging vs. surface film", r.required_air_surface_dt, state.max_air_surface_dt, r.film_ok, "K",
       "At h = " + fmt(state.surface_film_h, 1) + " W/m²K over " + fmt(r.exchange_area, 0) +
       " m², the most that can enter the mass is <b class=\"mono\">" + kW(r.max_mass_power) +
-      " kW</b>, giving a fastest ramp of <b>" + fmt(r.min_feasible_ramp_minutes, 0) + " min</b>.",
+      " kW</b>, giving a fastest ramp of <b>" + fmt(r.fastest_ramp_minutes, 0) + " min</b>.",
       "Mass charging is capped by convection and radiation from the air to the surfaces. This is independent of coil capacity and is usually the binding constraint.");
     var needed = state.setpoint_min - state.supply_dt;
     var reachable = state.tank_temp_cold + state.exchanger_approach;
@@ -580,6 +590,7 @@
     renderBreakdown(data.results);
     renderEnvelope(data.results);
     renderChecks(data.results);
+    renderAddedMassReadout(data.results);
   }
 
   // ---------------------------------------------------------------- scenarios
@@ -601,7 +612,8 @@
       "Dehumidification: " + kW(r.latent_design) + " kW; dew point at setpoint " + fmt(r.dew_point_c, 1) + " C",
       "Supply airflow: " + fmt(r.design_flow_ls, 0) + " L/s (" + fmt(r.design_flow_m3h, 0) + " m3/h), set by " + (r.flow_set_by_ventilation ? "ventilation minimum" : "capacity"),
       "Air-to-surface dT needed: " + fmt(r.required_air_surface_dt, 1) + " K vs " + fmt(state.max_air_surface_dt, 0) + " K allowed -> " + (r.film_ok ? "REACHABLE" : "NOT REACHABLE"),
-      "Fastest ramp the surface film permits: " + fmt(r.min_feasible_ramp_minutes, 0) + " min",
+      "Fastest ramp the surface film permits: " + fmt(r.fastest_ramp_minutes, 0) + " min (self-consistent; "
+        + fmt(r.min_feasible_ramp_minutes, 0) + " min is the figure conditional on the ramp asked for)",
       "Added mass participating: " + fmt(100 * r.added_participating_fraction, 0) + "% (" + fmt(r.added_penetration_mm, 0) + " mm of " + fmt(1000 * state.added_mass_thickness, 0) + " mm)",
       "Dedicated heat pump (tanks at " + fmt(state.tank_temp_hot, 0) + " / " + fmt(state.tank_temp_cold, 0) + " C, unlimited source):",
       "  heating " + kW(r.hp_heating) + " kW thermal, lift " + fmt(r.lift_heating, 0) + " K, COP " + fmt(r.cop_heating, 1) + ", " + kW(r.electric_heating) + " kW electric",

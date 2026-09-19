@@ -1,9 +1,22 @@
-"""Validate study/rooms.yaml against the model and report grid sizes.
+"""Validate study/rooms.yaml against the model and report what it will run.
 
     python study/check_config.py [path]
 
-Checks every parameter name exists, every range sits inside the model's own
-declared limits, and prints how many rows each configured grid would produce.
+Three jobs:
+
+* **Errors.**  Every parameter name exists and every range sits inside the
+  model's own declared limits.  Anything wrong here exits non-zero.
+* **Overrides.**  Anything in the config standing on top of a value rooms.py
+  sets deliberately gets named.  A room's baseline is not a suggestion: the
+  shell is 7.0 kJ/m2K because the room is lined in aluminium, and a config
+  that sweeps 5 to 15 has quietly replaced a measured property with a guess.
+  This is a warning, not an error -- sometimes an override is exactly what you
+  mean -- but it is never silent again.
+* **Size.**  How many rows each grid produces and what the Sobol sample costs,
+  so a sweep that will not fit in memory is obvious before you start it.
+
+The parsing lives in ``zcbsl_resize.study`` so that this script and the
+notebooks cannot drift apart in how they read the same file.
 """
 
 from __future__ import annotations
@@ -14,102 +27,91 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-import yaml  # noqa: E402
-
-from zcbsl_resize import rooms  # noqa: E402
+from zcbsl_resize import study as study_mod  # noqa: E402
 from zcbsl_resize.params import PARAMS_BY_KEY  # noqa: E402
 
-#: Keys that describe a room but are not model parameters.
-META_KEYS = {"label", "notes", "base"}
+#: Parameters worth calling out with their declared range and unit, because
+#: they are easy to misread without it (a percent looks like a bare number
+#: otherwise).
+HIGHLIGHT = {"added_mass_coverage"}
 
 
-def spec_kind(value):
-    """Classify one entry: fixed, grid, bounds, or list."""
-    if isinstance(value, dict) and "values" in value:
-        return "list", list(value["values"])
-    if isinstance(value, (int, float)):
-        return "fixed", [float(value)]
-    if isinstance(value, list) and len(value) == 3:
-        low, high, step = value
-        if step is None:
-            return "bounds", [float(low), float(high)]
-        count = int(round((float(high) - float(low)) / float(step))) + 1
-        return "grid", [float(low) + i * float(step) for i in range(max(count, 1))]
-    raise ValueError(f"cannot interpret {value!r}")
+def describe_room(room: study_mod.RoomConfig, config: study_mod.StudyConfig) -> None:
+    print(f"  {room.label}")
+    print(
+        f"    {len(room.specs)} parameters set here, "
+        f"{len(PARAMS_BY_KEY) - len(room.specs)} from baseline rooms.{room.base}()"
+    )
+    print(
+        f"    interior surface {room.interior_area:,.0f} m2 · floor {room.floor_area:,.0f} m2"
+    )
+
+    varying = room.varying
+    bounds = sorted(k for k, s in room.specs.items() if s.kind == "bounds")
+    print(f"    varying: {len(varying)}  (of which bounds-only: {len(bounds)})")
+
+    for key in sorted(HIGHLIGHT & set(room.specs)):
+        spec = room.specs[key]
+        unit = PARAMS_BY_KEY[key].unit
+        print(f"    {key}: {spec.low:,.0f}..{spec.high:,.0f} {unit}")
+
+    overrides = room.overrides()
+    if overrides:
+        print("    overrides rooms.py:")
+        for over in overrides:
+            mark = "!!" if over.excludes_baseline else " ·"
+            print(f"      {mark} {over.describe()}")
+            if over.excludes_baseline:
+                print("         the room's own value is never evaluated")
+
+    for name, axes in config.grids.items():
+        shape = room.grid_shape(axes)
+        rows = 1
+        detail = []
+        for axis, points in shape.items():
+            rows *= len(points)
+            if len(points) > 1:
+                detail.append(f"{axis}={len(points)}")
+            elif axis in room.specs and room.specs[axis].kind == "bounds":
+                detail.append(f"{axis}@midpoint")
+        if not any(len(p) > 1 for p in shape.values()):
+            print(f"    grid '{name}': not applicable, every axis is fixed for this room")
+        else:
+            print(f"    grid '{name}': {rows:,} rows  ({' x '.join(detail)})")
+
+    k = len(varying)
+    cost = config.sobol.n * (k + 2)
+    print(f"    sobol: {k} factors x n={config.sobol.n:,} -> {cost:,} evaluations")
+    print()
 
 
 def main(path: Path) -> int:
-    config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    shared = config.get("shared", {})
-    problems: list[str] = []
+    config = study_mod.load(path, strict=False)
+    print(f"{config.title}\n")
 
-    print(f"{config.get('meta', {}).get('title', path.name)}\n")
+    for room in config.rooms.values():
+        describe_room(room, config)
 
-    for room_key, room in config["rooms"].items():
-        base_key = room.get("base")
-        if base_key is not None and base_key not in rooms.ROOMS:
-            problems.append(f"{room_key}.base: unknown room {base_key!r}")
-        merged = {**shared, **room}
-        resolved: dict[str, tuple[str, list[float]]] = {}
+    warnings = [(room, over) for room in config.rooms.values() for over in room.overrides()]
+    loud = [(r, o) for r, o in warnings if o.excludes_baseline]
 
-        for key, value in merged.items():
-            if key in META_KEYS:
-                continue
-            model_key = key
-            spec = PARAMS_BY_KEY.get(model_key)
-            if spec is None:
-                problems.append(f"{room_key}.{key}: not a model parameter")
-                continue
-            try:
-                kind, values = spec_kind(value)
-            except ValueError as err:
-                problems.append(f"{room_key}.{key}: {err}")
-                continue
-            for v in (min(values), max(values)):
-                if not (spec.minimum <= v <= spec.maximum):
-                    problems.append(
-                        f"{room_key}.{key}: {v} outside the model's "
-                        f"{spec.minimum}..{spec.maximum} {spec.unit}".rstrip()
-                    )
-            resolved[model_key] = (kind, values)
-
-        # A room's baseline supplies anything the config does not mention.
-        missing = sorted(set(PARAMS_BY_KEY) - set(resolved))
-        print(f"  {room.get('label', room_key)}")
-        source = f"baseline rooms.{base_key}()" if base_key else "model defaults"
-        print(f"    {len(resolved)} parameters set here, {len(missing)} taken from {source}")
-        swept = {k: len(v) for k, (kind, v) in resolved.items() if kind == "grid"}
-        bounds = [k for k, (kind, _) in resolved.items() if kind == "bounds"]
-        print(f"    grid axes available: {len(swept)}  bounds-only: {len(bounds)}")
-
-        for name, grid in config.get("study", {}).get("grids", {}).items():
-            rows = 1
-            detail = []
-            varying = 0
-            for axis in grid["axes"]:
-                if axis not in PARAMS_BY_KEY:
-                    problems.append(f"grid '{name}': {axis} is not a model parameter")
-                    continue
-                kind, values = resolved.get(axis, ("baseline", [None]))
-                # An axis this room does not declare is simply fixed at its
-                # baseline value, which is not an error: the climate chamber's
-                # envelope cannot be exchanged, so it has nothing to sweep.
-                rows *= len(values)
-                if len(values) > 1:
-                    varying += 1
-                    detail.append(f"{axis}={len(values)}")
-            if varying == 0:
-                print(f"    grid '{name}': not applicable, every axis is fixed for this room")
-            else:
-                print(f"    grid '{name}': {rows:,} rows  ({' x '.join(detail)})")
-        print()
-
-    if problems:
+    if config.problems:
         print("PROBLEMS")
-        for problem in problems:
+        for problem in config.problems:
             print(f"  - {problem}")
         return 1
-    print("Config is valid.")
+
+    if loud:
+        print(
+            f"WARNING: {len(loud)} entr{'y' if len(loud) == 1 else 'ies'} sweep a value "
+            "rooms.py sets deliberately, without ever evaluating it:"
+        )
+        for room, over in loud:
+            print(f"  - {room.label}: {over.describe()}")
+        print("  Remove it from the config, or widen the sweep to include the real value.")
+        print()
+
+    print("Config is valid." if not loud else "Config is valid, with warnings above.")
     return 0
 
 
