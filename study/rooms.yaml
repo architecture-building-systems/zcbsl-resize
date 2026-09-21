@@ -169,7 +169,7 @@ rooms:
     # the 12 m2 physical concrete pad the worst-case notebook actually
     # models. That is expected: this range is what global sensitivity
     # explores, not a claim that 179 m2 of added mass is buildable.
-    added_mass_coverage: [0.0, 100.0, 10.0]
+    added_mass_coverage: [0.0, 10.0, 2.0]
     added_mass_thickness: 0.50
     added_mass_rho_c: 1800.0                # rammed earth
     added_mass_k: 1.25
@@ -178,7 +178,7 @@ rooms:
     # Resolved 2026-09-18: this room is never occupied, but a standing
     # refresh is wanted anyway, so the floor moves up from the model's
     # generic 0.5 to a real 1.0 -- this room's ACH never goes below that.
-    ach: [1.0, 11.0, 2.0]                   # was BOUNDS [0.5, 12.0]; now GRID with a real floor
+    ach: 1.0                   # was BOUNDS [0.5, 12.0]; now GRID with a real floor
     # Resolved 2026-09-18: was fixed at the shared 21 C placeholder, which
     # disagreed with the worst-case notebook's 18 C assumption. Now a real
     # sweep instead of a guess either way.

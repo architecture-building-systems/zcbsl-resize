@@ -635,6 +635,19 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
+  function applyScenario(payload) {
+    var loaded = payload.params || payload;
+    var applied = 0, skipped = [];
+    Object.keys(loaded).forEach(function (key) {
+      if (schema.params.some(function (p) { return p.key === key; })) {
+        setValue(key, Number(loaded[key])); applied++;
+      } else { skipped.push(key); }
+    });
+    syncPresetSelect();
+    requestCompute();
+    setStatus("Loaded " + applied + " parameters" + (skipped.length ? "; ignored " + skipped.join(", ") : ""), skipped.length > 0);
+  }
+
   function wireActions() {
     el("copy-summary").addEventListener("click", function () {
       var btn = el("copy-summary"), old = btn.textContent;
@@ -670,23 +683,26 @@
       var reader = new FileReader();
       reader.onload = function () {
         try {
-          var payload = JSON.parse(reader.result);
-          var loaded = payload.params || payload;
-          var applied = 0, skipped = [];
-          Object.keys(loaded).forEach(function (key) {
-            if (schema.params.some(function (p) { return p.key === key; })) {
-              setValue(key, Number(loaded[key])); applied++;
-            } else { skipped.push(key); }
-          });
-          syncPresetSelect();
-          requestCompute();
-          setStatus("Loaded " + applied + " parameters" + (skipped.length ? "; ignored " + skipped.join(", ") : ""), skipped.length > 0);
+          applyScenario(JSON.parse(reader.result));
         } catch (err) {
           setStatus("Could not read that file: " + err.message, true);
         }
       };
       reader.readAsText(file);
       event.target.value = "";
+    });
+
+    document.querySelectorAll("[data-default-scenario]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var path = btn.getAttribute("data-default-scenario");
+        fetch(path)
+          .then(function (res) {
+            if (!res.ok) throw new Error(res.status + " " + res.statusText);
+            return res.json();
+          })
+          .then(function (payload) { applyScenario(payload); })
+          .catch(function (err) { setStatus("Could not load " + btn.textContent + ": " + err.message, true); });
+      });
     });
 
     var toggle = el("mobile-sheet-toggle"), stack = el("right-stack");
