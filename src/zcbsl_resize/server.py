@@ -18,7 +18,7 @@ import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 
 from .params import ChamberParams, schema
-from .physics import compute, fastest_ramp_minutes
+from .physics import compute, fastest_ramp_minutes, mode_crossover_minutes
 from .scenarios import ramp_sweep
 
 WEB_DIR = "web"
@@ -80,6 +80,10 @@ def create_app() -> Flask:
         # the fixed point; see physics.fastest_ramp_minutes.
         results = dict(results)
         results["fastest_ramp_minutes"] = fastest_ramp_minutes(params)
+        # Past this ramp time the operating mode sets the size, not the ramp.
+        # None means the ramp governs at every ramp time the tool allows.
+        results["heating_crossover_minutes"] = mode_crossover_minutes(params, "heating")
+        results["cooling_crossover_minutes"] = mode_crossover_minutes(params, "cooling")
 
         return jsonify(
             {
@@ -95,6 +99,10 @@ def create_app() -> Flask:
                     "ramp_minutes": sweep["ramp_minutes"].tolist(),
                     "heating_design": sweep["heating_design"].tolist(),
                     "cooling_design": sweep["cooling_design"].tolist(),
+                    "heating_operating": sweep["heating_operating"].tolist(),
+                    "cooling_operating": sweep["cooling_operating"].tolist(),
+                    "heating_ramp": sweep["heating_ramp"].tolist(),
+                    "cooling_ramp": sweep["cooling_ramp"].tolist(),
                     # Was sweep["min_feasible_ramp_minutes"].iloc[0] -- the value at
                     # the *shortest* ramp in the sweep, where almost no added mass
                     # participates, so the unreachable band was drawn far too narrow.

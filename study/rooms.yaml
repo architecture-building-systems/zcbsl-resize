@@ -54,6 +54,11 @@ shared:
   tank_temp_cold: 10.0
   exchanger_approach: [1.0, 5.0, 1.0]
   carnot_efficiency: [0.35, 0.60, 0.05]
+  # Decided 2026-09-23: the tanks can be switched off, in which case each
+  # machine works against outdoor air at the design temperatures across an
+  # outdoor coil with its own approach. 1 = tanks on, 0 = off.
+  tank_enabled: 1.0
+  outdoor_coil_approach: 8.0
 
   # ---- the weather and the hall the rooms sit in --------------------------
   boundary_temp_winter: -8.0                # CONFIRM: Zurich design condition?
@@ -130,9 +135,10 @@ rooms:
     sensible_per_person: 75.0
     latent_per_person: 45.0
     equipment_w_per_m2: [0.0, 100.0, 25.0]  # CONFIRM: what runs in this room?
+    ramp_equipment_pct: 100.0               # Decided 2026-09-23: computers and small electronics stay on through a ramp
 
     # ---- delivery limits ----------------------------------------------------
-    radiant_fraction: 60.0                  # CONFIRM: active share of floor + roof
+    radiant_fraction: 20.0                  # Decided 2026-09-23: hung ceiling panels, 20% of floor + roof
     radiant_heat_limit: 100.0               # EN 1264 / ISO 11855
     radiant_cool_limit: 60.0                # condensation-limited
     supply_dt: [8.0, 20.0, 4.0]
@@ -192,9 +198,12 @@ rooms:
     # The Sun on or off is a scenario, not a slider: with 10.5 kW of light the
     # room never needs heating, so the heating design case is Sun-off.
     equipment_w_per_m2: {values: [0.0, 144.9275]}   # 10 500 W / 72.45 m2 (corrected floor area, 2026-09-18)
+    # Decided 2026-09-23: the Sun is always off during a ramp, and nobody is
+    # inside. The ramp mode sees none of this room's equipment.
+    ramp_equipment_pct: 0.0
 
     # ---- delivery limits ----------------------------------------------------
-    radiant_fraction: 0.0                  # CONFIRM
+    radiant_fraction: 20.0                  # Decided 2026-09-23: hung ceiling panels, 20% of floor + roof
     radiant_heat_limit: 100.0               # EN 1264 / ISO 11855
     radiant_cool_limit: 60.0                # condensation-limited
     supply_dt: [8.0, 20.0, 4.0]
@@ -206,8 +215,16 @@ rooms:
 study:
 
   outputs:
-    - heating_design           # air-side coil, W
+    - heating_design           # room total, W: the larger of operating and ramp
     - cooling_design
+    - heating_operating        # holding an experiment, with margin
+    - cooling_operating
+    - heating_ramp             # mass charging + hold in ramp conditions, with margin
+    - cooling_ramp
+    - air_heating_design       # what the air coil carries once the radiant panels are full
+    - air_cooling_design
+    - flow_operating_ls
+    - flow_ramp_ls
     - hp_heating               # dedicated heat pump, W
     - hp_cooling
     - design_flow_ls
@@ -244,6 +261,10 @@ study:
     targets:
       - cooling_design         # the sizing number
       - heating_design         # different drivers; chamber needs the Sun-off scenario
+      - cooling_operating      # the two modes separately: which inputs drive which
+      - cooling_ramp
+      - heating_operating
+      - heating_ramp
       - fastest_ramp_minutes   # the ramp
 
   # Envelope of achievable values per room: Latin hypercube over everything not

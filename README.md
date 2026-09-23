@@ -19,6 +19,14 @@ in different ways:
 | **Holding** a setpoint | Envelope, ventilation, internal gains | Radiant capacity, envelope, plant |
 | **Plant sizing** | The room's full design capacity, since nothing buffers it | Nothing, at room level: this is the number |
 
+The room is always either holding or ramping, never both, so the design
+capacity is the **larger** of the two modes, not their sum. The ramp includes
+the hold at its own far end, evaluated with nobody inside and the Artificial
+Sun off. Every output that matters exists per mode (`heating_operating`,
+`heating_ramp`, `cooling_operating`, `cooling_ramp`, `flow_operating_ls`,
+`flow_ramp_ls`, and the radiant, air-coil, electric and source-side splits),
+so sweeps and Sobol screens can target either mode on its own.
+
 And a fourth constraint that no amount of equipment touches: heat only crosses
 from the room air into the thermal mass through a surface film of roughly
 8 W/m²K. Past a certain mass and a certain ramp time, the air would have to run
@@ -46,13 +54,15 @@ save and load write and read the same JSON format the Python API uses.
 ## Use it as a library
 
 ```python
-from zcbsl_resize import ChamberParams, compute, fastest_ramp_minutes, rooms
+from zcbsl_resize import ChamberParams, compute, fastest_ramp_minutes, mode_crossover_minutes, rooms
 
 r = compute(rooms.climate_chamber())          # a real room, as built
-params = rooms.module_room().replace(ramp_minutes=45, added_mass_area=20)
+params = rooms.module_room().replace(ramp_minutes=45, added_mass_coverage=20)
 r = compute(params)
 
-print(r["heating_design"] / 1000, "kW at the coil")
+print(r["heating_design"] / 1000, "kW for the room: the larger mode")
+print(r["heating_operating"] / 1000, r["heating_ramp"] / 1000, "kW operating / ramp")
+print(mode_crossover_minutes(params, "cooling"), "min: past this, holding sets the size")
 print(r["cop_cooling"], "COP on the cooling duty")
 print(r["min_feasible_ramp_minutes"], "min, given the ramp you asked for")
 print(fastest_ramp_minutes(params), "min is the room's actual speed limit")
@@ -69,7 +79,7 @@ from zcbsl_resize.scenarios import grid_sweep, sensitivity_ranking, latin_hyperc
 
 df = grid_sweep(rooms.module_room(), {
     "ramp_minutes": [15, 30, 45, 60, 120],
-    "added_mass_area": [0, 10, 20, 40],
+    "added_mass_coverage": [0, 10, 20, 40],
     "south_wwr": [0, 20, 40, 60, 80],
     "ach": [1, 3, 6, 12],
 }, outputs=["heating_design", "cooling_design", "min_feasible_ramp_minutes"])
@@ -78,7 +88,7 @@ ranked = sensitivity_ranking(ChamberParams(), output="heating_design")
 sample = latin_hypercube(ChamberParams(), {"ramp_minutes": (10, 120)}, n=5000, seed=1)
 
 save_scenario(ChamberParams(ramp_minutes=45), "scenarios/slow-ramp.json",
-              name="45 min ramp", sweeps={"added_mass_area": [0, 10, 20, 40]})
+              name="45 min ramp", sweeps={"added_mass_coverage": [0, 10, 20, 40]})
 ```
 
 A million cases run in a few seconds. Name the `outputs` you actually need: the

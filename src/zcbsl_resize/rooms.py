@@ -17,6 +17,12 @@ from .params import ChamberParams
 #: some glass. Thermally thin, so the whole layer participates: kJ/m2K.
 ALUMINIUM_AND_GLASS_SHELL = 7.0
 
+#: Hung radiant ceiling panels, as a share of floor + roof area.  Set
+#: 2026-09-23: 20 % of floor + ceiling, i.e. 40 % of the ceiling itself.
+#: (The panels physically cover closer to 75 % of the ceiling; 20 % is the
+#: deliberate design figure.)
+RADIANT_FRACTION = 20.0
+
 #: Total light output of the Artificial Sun into the climate chamber, W.
 #: 1200 W/m2 over an 8.75 m2 aperture.
 ARTIFICIAL_SUN_W = 1200.0 * 8.75
@@ -40,6 +46,9 @@ def module_room() -> ChamberParams:
         boundary_temp_winter=-8.0,
         boundary_temp_summer=45.0,
         surrounding_temp=21.0,
+        radiant_fraction=RADIANT_FRACTION,
+        # Computers and small electronics stay on through a ramp.
+        ramp_equipment_pct=100.0,
     )
     params = params.with_surface(
         "south", u_opaque=0.30, u_glazing=1.00, wwr=40.0, shgc=0.50,
@@ -86,6 +95,9 @@ def climate_chamber() -> ChamberParams:
         boundary_temp_summer=45.0,
         surrounding_temp=21.0,
         equipment_w_per_m2=ARTIFICIAL_SUN_W / (10.5 * 6.9),
+        radiant_fraction=RADIANT_FRACTION,
+        # The only equipment is the Sun, and it is always off during a ramp.
+        ramp_equipment_pct=0.0,
     )
     # North, east and west: exterior, clerestory glazing.
     # East and west irradiance is an assumption - only the north figure was given.

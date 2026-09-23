@@ -127,3 +127,35 @@ def test_a_bare_room_shows_the_same_number_either_way(client):
     assert results["fastest_ramp_minutes"] == pytest.approx(
         results["min_feasible_ramp_minutes"], rel=1e-9
     )
+
+
+def test_compute_payload_splits_operating_and_ramp(client):
+    payload = client.post("/api/compute", json={"params": {}}).get_json()
+    r = payload["results"]
+    for duty in ("heating", "cooling"):
+        assert r[f"{duty}_design"] == pytest.approx(max(r[f"{duty}_operating"], r[f"{duty}_ramp"]))
+        assert f"{duty}_crossover_minutes" in r
+    sweep = payload["sweep"]
+    for key in ("heating_operating", "heating_ramp", "cooling_operating", "cooling_ramp"):
+        assert len(sweep[key]) == len(sweep["ramp_minutes"])
+
+
+def test_schema_marks_the_tank_switch_as_a_toggle(client):
+    params = {p["key"]: p for p in client.get("/api/schema").get_json()["params"]}
+    assert params["tank_enabled"]["kind"] == "toggle"
+    assert params["ramp_minutes"]["kind"] == "slider"
+
+
+def test_default_scenarios_carry_the_2026_09_23_decisions():
+    """20 % radiant in every shipped default; the chamber's Sun is off for ramps."""
+    from pathlib import Path
+
+    folder = Path(__file__).resolve().parents[1] / "src" / "zcbsl_resize" / "web" / "default"
+    files = sorted(folder.glob("*.json"))
+    assert len(files) == 3
+    for path in files:
+        params = json.loads(path.read_text())["params"]
+        assert params["radiant_fraction"] == 20.0, path.name
+        assert params["tank_enabled"] == 1.0, path.name
+        expected = 0.0 if "chamber" in path.name else 100.0
+        assert params["ramp_equipment_pct"] == expected, path.name

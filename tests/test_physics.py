@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from zcbsl_resize import ChamberParams, compute, fastest_ramp_minutes
+from zcbsl_resize import ChamberParams, compute, fastest_ramp_minutes, mode_crossover_minutes
 from zcbsl_resize.physics import CP_AIR, RHO_AIR, _fastest_ramp_iterated
 from zcbsl_resize.surfaces import SURFACES
 
@@ -165,10 +165,49 @@ def test_loads_never_go_negative(p):
 
 # ---------------------------------------------------------------- ramp
 
-def test_design_capacity_is_hold_plus_ramp_plus_margin(p):
+def test_each_mode_carries_its_own_margin(p):
     r = compute(p)
-    assert r["heating_design"] == pytest.approx((r["heating_hold"] + r["power_mass"]) * 1.15)
-    assert r["cooling_design"] == pytest.approx((r["cooling_hold"] + r["power_mass"]) * 1.15)
+    assert r["heating_operating"] == pytest.approx(r["heating_hold"] * 1.15)
+    assert r["cooling_operating"] == pytest.approx(r["cooling_hold"] * 1.15)
+    assert r["heating_ramp"] == pytest.approx((r["heating_hold_ramp"] + r["power_mass"]) * 1.15)
+    assert r["cooling_ramp"] == pytest.approx((r["cooling_hold_ramp"] + r["power_mass"]) * 1.15)
+
+
+@pytest.mark.parametrize("ramp", [5.0, 30.0, 480.0, 1e6])
+def test_design_is_the_larger_mode_never_the_sum(p, ramp):
+    """A room holds an experiment or ramps between two; it never does both."""
+    r = compute(p, ramp_minutes=ramp)
+    for duty in ("heating", "cooling"):
+        op, rp = r[f"{duty}_operating"], r[f"{duty}_ramp"]
+        assert r[f"{duty}_design"] == pytest.approx(max(op, rp))
+        assert bool(r[f"{duty}_set_by_ramp"]) == (rp > op)
+        if min(op, rp) > 0:
+            assert r[f"{duty}_design"] < op + rp
+
+
+def test_the_ramp_hold_has_nobody_inside_and_the_sun_off(p):
+    """Same boundary as the operating hold, minus the gains that are off."""
+    dark = compute(p.replace(ramp_equipment_pct=0.0))
+    gains = dark["internal_sensible"]
+    assert dark["ramp_internal_sensible"] == pytest.approx(0.0)
+    assert dark["heating_hold_ramp"] == pytest.approx(dark["heating_hold"] + gains)
+    assert dark["cooling_hold_ramp"] == pytest.approx(dark["cooling_hold"] - gains)
+
+    # Equipment left on still counts; occupants never do.
+    lit = compute(p.replace(ramp_equipment_pct=100.0))
+    assert lit["ramp_internal_sensible"] == pytest.approx(lit["equipment_w"])
+    people = p.occupants * p.sensible_per_person
+    assert lit["cooling_hold_ramp"] == pytest.approx(lit["cooling_hold"] - people)
+
+
+def test_the_ramp_sees_the_same_extreme_boundary(p):
+    """Only the gains change between modes: a hotter summer moves both."""
+    mild = compute(p.replace(boundary_temp_summer=30.0))
+    hot = compute(p.replace(boundary_temp_summer=45.0))
+    delta_op = hot["cooling_hold"] - mild["cooling_hold"]
+    delta_ramp = hot["cooling_hold_ramp"] - mild["cooling_hold_ramp"]
+    assert delta_op > 0
+    assert delta_ramp == pytest.approx(delta_op)
 
 
 def test_ramp_power_is_energy_over_time(p):
@@ -187,9 +226,30 @@ def test_longer_ramps_need_less_capacity(p):
     assert designs == sorted(designs, reverse=True)
 
 
-def test_infinite_ramp_converges_on_the_steady_hold(p):
+def test_infinite_ramp_converges_on_the_larger_steady_hold(p):
     r = compute(p, ramp_minutes=1e7)
-    assert r["heating_design"] == pytest.approx(r["heating_hold"] * 1.15, rel=1e-3)
+    expected = max(r["heating_hold"], r["heating_hold_ramp"]) * 1.15
+    assert r["heating_design"] == pytest.approx(expected, rel=1e-3)
+
+
+def test_crossover_is_where_the_modes_swap(p):
+    """Past the crossover the operating mode sets the size; just before it the ramp does."""
+    # A well-lit room whose lights go off for the ramp: the hold drops by the
+    # lighting, so a long enough ramp hands the size back to the operating mode.
+    cool = p.replace(ramp_equipment_pct=0.0, equipment_w_per_m2=100.0)
+    t = mode_crossover_minutes(cool, "cooling")
+    assert t is not None and t > 1.0
+    after = compute(cool, ramp_minutes=t)
+    before = compute(cool, ramp_minutes=t - 1.0)
+    assert after["cooling_ramp"] <= after["cooling_operating"]
+    assert before["cooling_ramp"] > before["cooling_operating"]
+
+
+def test_no_crossover_when_the_ramp_hold_alone_is_bigger(p):
+    """Heating with the Sun off during ramps: the ramp governs at any ramp time."""
+    r = compute(p.replace(ramp_equipment_pct=0.0))
+    assert r["heating_hold_ramp"] > r["heating_hold"]
+    assert mode_crossover_minutes(p.replace(ramp_equipment_pct=0.0), "heating") is None
 
 
 def test_setpoints_are_ordered_defensively(p):
@@ -272,6 +332,54 @@ def test_airflow_is_the_larger_of_capacity_and_ventilation(p):
     assert r["design_flow_ls"] == pytest.approx(r["design_flow_m3s"] * 1000.0)
 
 
+def test_airflow_splits_by_mode(p):
+    r = compute(p)
+    ach = r["flow_from_ach"]
+    op = max(r["flow_heating_operating"], r["flow_cooling_operating"], ach)
+    rp = max(r["flow_heating_ramp"], r["flow_cooling_ramp"], ach)
+    assert r["flow_operating_ls"] == pytest.approx(op * 1000.0)
+    assert r["flow_ramp_ls"] == pytest.approx(rp * 1000.0)
+    assert r["design_flow_m3s"] == pytest.approx(max(op, rp))
+
+
+def test_airflow_is_sized_on_the_air_side_only(p):
+    r = compute(p)
+    per_m3s = RHO_AIR * CP_AIR * p.supply_dt
+    assert r["flow_cooling_ramp"] == pytest.approx(r["air_cooling_ramp"] / per_m3s)
+    assert r["flow_heating_operating"] == pytest.approx(r["air_heating_operating"] / per_m3s)
+
+
+# ---------------------------------------------------------------- radiant
+
+def test_radiant_panels_fill_first_and_the_air_carries_the_rest(p):
+    r = compute(p)
+    area = (r["area_floor"] + r["area_roof"]) * p.radiant_fraction / 100.0
+    assert r["radiant_area_actual"] == pytest.approx(area)
+    cap = p.radiant_cool_limit * area
+    for mode in ("operating", "ramp"):
+        load = r[f"cooling_{mode}"]
+        assert r[f"radiant_cooling_{mode}"] == pytest.approx(min(load, cap))
+        assert r[f"radiant_cooling_{mode}"] + r[f"air_cooling_{mode}"] == pytest.approx(load)
+
+
+def test_radiant_helps_the_ramp_too(p):
+    """Panels are not reserved for the hold: they cut the ramp's air side as well."""
+    bare = compute(p.replace(radiant_fraction=0.0))
+    panels = compute(p.replace(radiant_fraction=50.0))
+    assert bare["air_cooling_ramp"] == pytest.approx(bare["cooling_ramp"])
+    assert panels["air_cooling_ramp"] < bare["air_cooling_ramp"]
+    assert panels["flow_ramp_ls"] < bare["flow_ramp_ls"]
+    # The room total does not care which emitter delivers it.
+    assert panels["cooling_design"] == pytest.approx(bare["cooling_design"])
+
+
+def test_radiant_panels_do_not_move_the_film_limit(p):
+    """Hung panels charge no mass directly, so the speed limit is unchanged."""
+    bare = compute(p.replace(radiant_fraction=0.0, added_mass_coverage=20.0))
+    panels = compute(p.replace(radiant_fraction=100.0, added_mass_coverage=20.0))
+    assert panels["required_air_surface_dt"] == pytest.approx(bare["required_air_surface_dt"])
+
+
 def test_high_air_change_rates_govern_the_airflow(p):
     """A lightly loaded room flushed at 20 ACH is sized by the ventilation rate."""
     quiet = p.replace(
@@ -297,6 +405,49 @@ def test_bigger_supply_dt_shrinks_the_airflow(p):
 
 
 # ---------------------------------------------------------------- heat pump
+
+def test_tanks_off_draws_on_outdoor_air(p):
+    on = compute(p)
+    off = compute(p.replace(tank_enabled=0.0))
+    assert float(off["source_temp_heating"]) == pytest.approx(p.boundary_temp_winter)
+    assert float(off["sink_temp_cooling"]) == pytest.approx(p.boundary_temp_summer)
+    assert off["lift_cooling"] == pytest.approx(
+        (p.boundary_temp_summer + p.outdoor_coil_approach)
+        - (p.setpoint_min - p.supply_dt - p.exchanger_approach)
+    )
+    assert off["cop_cooling"] < on["cop_cooling"]
+    assert off["cop_heating"] < on["cop_heating"]
+    assert not bool(off["free_cooling"])
+    # The tanks see nothing; the outdoor air sees it all.
+    assert off["tank_reject_cooling"] == pytest.approx(0.0)
+    assert off["tank_extract_heating"] == pytest.approx(0.0)
+    assert off["source_reject_cooling"] == pytest.approx(off["hp_cooling"] + off["electric_cooling"])
+    # Thermal capacity is the room's, not the plant's: switching sources moves none of it.
+    assert off["cooling_design"] == pytest.approx(on["cooling_design"])
+
+
+def test_the_outdoor_approach_only_matters_with_the_tanks_off(p):
+    a = compute(p.replace(outdoor_coil_approach=4.0))
+    b = compute(p.replace(outdoor_coil_approach=16.0))
+    assert a["cop_cooling"] == pytest.approx(b["cop_cooling"])
+    a_off = compute(p.replace(tank_enabled=0.0, outdoor_coil_approach=4.0))
+    b_off = compute(p.replace(tank_enabled=0.0, outdoor_coil_approach=16.0))
+    assert a_off["cop_cooling"] > b_off["cop_cooling"]
+
+
+def test_electric_and_source_split_by_mode_in_proportion(p):
+    r = compute(p)
+    for duty, sign in (("heating", -1.0), ("cooling", 1.0)):
+        verb = "extract" if duty == "heating" else "reject"
+        for mode in ("operating", "ramp"):
+            q = r[f"{duty}_{mode}"]
+            e = r[f"electric_{duty}_{mode}"]
+            assert e == pytest.approx(q / r[f"cop_{duty}"])
+            assert r[f"source_{verb}_{duty}_{mode}"] == pytest.approx(q + sign * e)
+        assert r[f"electric_{duty}"] == pytest.approx(
+            max(r[f"electric_{duty}_operating"], r[f"electric_{duty}_ramp"])
+        )
+
 
 def test_the_room_machine_carries_the_full_design_capacity(p):
     """The tanks are a source, not a buffer, so nothing absorbs the ramp surge."""

@@ -4,6 +4,9 @@ The closed-form sizing equation says the peak power for a linear ramp is
 
     P_peak = C_total * dT / t_ramp + (steady-state load at the far setpoint)
 
+where the steady-state load is evaluated in ramp conditions: nobody inside and
+only ``ramp_equipment_pct`` of the equipment running.
+
 This file rebuilds the chamber as a differential equation from the parameters
 alone, integrates it, and checks that claim.  If the closed form were wrong,
 these tests would fail.
@@ -54,6 +57,11 @@ def internal_gains(p: ChamberParams) -> float:
     return p.occupants * p.sensible_per_person + p.equipment_w_per_m2 * p.width * p.depth
 
 
+def ramp_gains(p: ChamberParams) -> float:
+    """During a ramp nobody is inside and only the share of equipment left on runs."""
+    return p.ramp_equipment_pct / 100.0 * p.equipment_w_per_m2 * p.width * p.depth
+
+
 def total_loss(p: ChamberParams, temp) -> float:
     return envelope_loss(p, temp) + vent_conductance(p) * (temp - p.vent_supply_temp)
 
@@ -69,14 +77,23 @@ def single_node_required_power(p: ChamberParams, c_total: float, steps: int = 20
     times = np.linspace(0.0, duration, steps + 1)
     temps = p.setpoint_min + rate * times
     loss = np.array([total_loss(p, float(t)) for t in temps])
-    return times, c_total * rate + loss - internal_gains(p)
+    return times, c_total * rate + loss - ramp_gains(p)
 
 
 def test_closed_form_peak_matches_the_integrated_model():
     p = ChamberParams()
     r = compute(p)
     _, power = single_node_required_power(p, float(r["c_total"]), steps=2000)
-    assert power.max() == pytest.approx(r["heating_hold"] + r["power_mass"], rel=1e-4)
+    assert power.max() == pytest.approx(r["heating_hold_ramp"] + r["power_mass"], rel=1e-4)
+    assert power.max() * 1.15 == pytest.approx(r["heating_ramp"], rel=1e-4)
+
+
+def test_the_sun_off_ramp_is_integrated_with_the_sun_off():
+    """With nothing running during the ramp, the integrated peak rises by exactly the gains."""
+    p = ChamberParams(ramp_equipment_pct=0.0)
+    r = compute(p)
+    _, power = single_node_required_power(p, float(r["c_total"]), steps=2000)
+    assert power.max() == pytest.approx(r["heating_hold_ramp"] + r["power_mass"], rel=1e-4)
 
 
 @pytest.mark.parametrize("ramp", [10.0, 30.0, 90.0, 240.0])
@@ -85,7 +102,7 @@ def test_peak_matches_across_ramp_times_and_mass(ramp, mass_coverage):
     p = ChamberParams(ramp_minutes=ramp, added_mass_coverage=mass_coverage)
     r = compute(p)
     _, power = single_node_required_power(p, float(r["c_total"]), steps=2000)
-    assert power.max() == pytest.approx(r["heating_hold"] + r["power_mass"], rel=1e-4)
+    assert power.max() == pytest.approx(r["heating_hold_ramp"] + r["power_mass"], rel=1e-4)
 
 
 @pytest.mark.parametrize("room", ["module_room", "climate_chamber"])
@@ -94,7 +111,7 @@ def test_peak_matches_for_the_real_rooms(room):
     p = rooms.get(room)
     r = compute(p)
     _, power = single_node_required_power(p, float(r["c_total"]), steps=2000)
-    assert power.max() == pytest.approx(r["heating_hold"] + r["power_mass"], rel=1e-4)
+    assert power.max() == pytest.approx(r["heating_hold_ramp"] + r["power_mass"], rel=1e-4)
 
 
 def _integrate(p: ChamberParams, c_total: float, power: float, duration: float, dt: float = 0.5):
@@ -102,7 +119,7 @@ def _integrate(p: ChamberParams, c_total: float, power: float, duration: float, 
     temp = p.setpoint_min
     reached_at = None
     for step in range(int(duration / dt) + 1):
-        temp += dt * (power + internal_gains(p) - total_loss(p, temp)) / c_total
+        temp += dt * (power + ramp_gains(p) - total_loss(p, temp)) / c_total
         if reached_at is None and temp >= p.setpoint_max:
             reached_at = step * dt
     return temp, reached_at
@@ -117,7 +134,7 @@ def test_applying_the_sized_capacity_actually_reaches_setpoint_in_time():
     p = ChamberParams()
     r = compute(p)
     duration = p.ramp_minutes * 60.0
-    _, reached_at = _integrate(p, float(r["c_total"]), float(r["heating_hold"] + r["power_mass"]), duration)
+    _, reached_at = _integrate(p, float(r["c_total"]), float(r["heating_hold_ramp"] + r["power_mass"]), duration)
     assert reached_at is not None, "sized capacity failed to reach setpoint"
     assert reached_at <= duration * 1.001
 
@@ -127,7 +144,7 @@ def test_undersized_capacity_fails_to_reach_setpoint():
     p = ChamberParams()
     r = compute(p)
     duration = p.ramp_minutes * 60.0
-    final, _ = _integrate(p, float(r["c_total"]), 0.5 * float(r["heating_hold"] + r["power_mass"]), duration)
+    final, _ = _integrate(p, float(r["c_total"]), 0.5 * float(r["heating_hold_ramp"] + r["power_mass"]), duration)
     assert final < p.setpoint_max
 
 

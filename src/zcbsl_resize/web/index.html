@@ -24,20 +24,24 @@
 
   <div class="stat-grid" id="stat-grid"></div>
 
+  <div class="chart-card mode-card" id="mode-card"></div>
+
   <div class="insight-row" id="insight-row"></div>
 
   <div class="chart-row">
     <div class="chart-card">
-      <div class="chart-title">Design capacity vs. ramp time<button type="button" class="info-icon" aria-label="What this chart shows" aria-expanded="false" aria-describedby="tip-src-sensitivity"><span aria-hidden="true">i</span><span class="info-tooltip" id="tip-src-sensitivity" role="tooltip">Recomputes heating and cooling design capacity across a range of ramp times, holding every other input fixed. The shaded band on the left is where the surface film cannot move heat into the mass fast enough, whatever the coil can produce.</span></button></div>
+      <div class="chart-title">Operating vs. ramp across ramp time<button type="button" class="info-icon" aria-label="What this chart shows" aria-expanded="false" aria-describedby="tip-src-sensitivity"><span aria-hidden="true">i</span><span class="info-tooltip" id="tip-src-sensitivity" role="tooltip">Recomputes both modes across a range of ramp times, holding every other input fixed. Solid: the ramp requirement, which falls as the ramp gets longer. Dashed: the operating requirement, which does not depend on the ramp. The pale band under them is the design value, the larger of the two. Where a solid line drops below its dashed line, the ramp stops setting the size. The shaded band on the left is where the surface film cannot move heat into the mass fast enough, whatever the coil can produce.</span></button></div>
       <div id="sensitivity-chart"></div>
       <div class="chart-legend">
-        <span><span class="legend-swatch" style="background:var(--heat)"></span>Heating design</span>
-        <span><span class="legend-swatch" style="background:var(--cool)"></span>Cooling design</span>
+        <span><span class="legend-swatch" style="background:var(--heat)"></span>Heating ramp</span>
+        <span><span class="legend-swatch legend-dash" style="border-color:var(--heat)"></span>Heating operating</span>
+        <span><span class="legend-swatch" style="background:var(--cool)"></span>Cooling ramp</span>
+        <span><span class="legend-swatch legend-dash" style="border-color:var(--cool)"></span>Cooling operating</span>
         <span><span class="legend-swatch" style="background:color-mix(in srgb, var(--crit) 25%, transparent)"></span>Physically unreachable</span>
       </div>
     </div>
     <div class="chart-card">
-      <div class="chart-title">What the design number is made of<button type="button" class="info-icon" aria-label="What this chart shows" aria-expanded="false" aria-describedby="tip-src-breakdown"><span aria-hidden="true">i</span><span class="info-tooltip" id="tip-src-breakdown" role="tooltip">Each bar splits the design capacity into what's needed to hold the boundary at steady state, what's needed to charge the room's mass for the ramp, and the safety margin on top.</span></button></div>
+      <div class="chart-title">What each mode is made of<button type="button" class="info-icon" aria-label="What this chart shows" aria-expanded="false" aria-describedby="tip-src-breakdown"><span aria-hidden="true">i</span><span class="info-tooltip" id="tip-src-breakdown" role="tooltip">One bar per duty and mode. The operating bar is the steady hold plus margin. The ramp bar is the hold at the far setpoint with the Sun off and nobody inside, plus the power to charge the mass, plus margin. The solid bar, marked with an arrow, is the one that sets the design value; the two are never added.</span></button></div>
       <div id="breakdown-chart"></div>
       <div class="chart-legend">
         <span><span class="legend-swatch" style="background:var(--surface-2);border:1px solid var(--line)"></span>Steady-state hold</span>
@@ -54,14 +58,17 @@
   <details class="note-card">
     <summary>Assumptions &amp; limitations &mdash; read before you quote these numbers</summary>
     <ul>
-      <li>Ramp power assumes a <b>constant-rate linear transition</b> between setpoints, sized against the instantaneous load at the far end of the ramp. For a lumped capacity this is exact; <code>tests/test_dynamic_reference.py</code> confirms it against a time-stepped model.</li>
+      <li><b>Design capacity is the larger of the operating and ramp modes, never their sum.</b> The room is either holding an experiment or ramping between two.</li>
+      <li>Ramp power assumes a <b>constant-rate linear transition</b> between setpoints, sized against the instantaneous load at the far end of the ramp. For a lumped capacity this is exact; <code>tests/test_dynamic_reference.py</code> confirms it against a time-stepped model. That far-end load uses <b>the same extreme boundary</b> as the operating mode, including real sun through glazing, but with <b>nobody inside and the Artificial Sun off</b>; only the share of equipment set by <i>Equipment on during ramp</i> still runs.</li>
+      <li><b>Hung radiant ceiling panels</b> carry load up to their W/m&sup2; limit in both modes, and the air coil carries the rest; supply airflow is sized on that remainder. The panels hang clear of the structure, so they charge no mass directly and the surface-film limit is unchanged by them.</li>
       <li><b>Thermal mass is diffusion-limited.</b> Only the depth heat actually reaches within the ramp counts, using the closed-form linear-ramp solution for a semi-infinite solid. That assumes the surface itself follows the ramp perfectly, so it <i>overstates</i> participating mass; the real number is lower and the sizing is conservative.</li>
       <li><b>The surface film is checked separately.</b> Heat enters the mass through roughly 8 W/m&sup2;K of combined convection and radiation. If the air would have to run further from the surfaces than you allow, the ramp time is unreachable at any coil size.</li>
       <li>Winter heating design <b>ignores solar gain</b> (conservative). Summer cooling includes it via SHGC &times; glazed area &times; irradiance.</li>
       <li>Opaque surfaces are driven by <b>air temperature only</b> &mdash; no sol-air correction for absorbed radiation on the opaque facade or roof. At high irradiance this understates the cooling load.</li>
       <li>The facade is <b>the whole of the longest wall</b>, split into glazed and opaque by the window-to-wall ratio. Only the floor and the three remaining walls are treated as adiabatic, with a small residual U-value against the surrounding lab. The facade and the ceiling are real boundaries and see the same emulated climate.</li>
       <li>Latent load uses ASHRAE psychrometrics from dry-bulb and RH on both sides, checked against published table values. It does not model coil bypass, reheat, or the moisture stored in the room's own materials.</li>
-      <li>The buffer check verifies stored <i>energy</i> only (volume &times; usable &Delta;T), not the tank's discharge or flow-rate limit. The anergy-grid source side and heat-pump COP are not modelled.</li>
+      <li>Heat-pump COP is <b>Carnot times an efficiency factor</b>, not a manufacturer curve. With the tanks on, the source is the tank temperature across the exchanger approach; with them off, it is the winter or summer design air across the outdoor coil approach. Neither the tanks' capacity nor the anergy network behind them is checked.</li>
+      <li>Dehumidification is reported separately and is <b>not included in the cooling capacity</b>.</li>
       <li>Fan heat, duct gain, filter pressure drop and defrost energy are excluded. That is what the margin slider is for.</li>
       <li>A first-pass exploration tool, not a substitute for a mechanical engineer's own load calculation and equipment selection.</li>
     </ul>

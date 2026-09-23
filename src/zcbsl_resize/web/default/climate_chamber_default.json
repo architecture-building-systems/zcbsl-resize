@@ -60,16 +60,19 @@
     "sensible_per_person": 75.0,
     "latent_per_person": 45.0,
     "equipment_w_per_m2": 144.92753623188406,
-    "radiant_fraction": 60.0,
+    "ramp_equipment_pct": 0.0,
+    "radiant_fraction": 20.0,
     "radiant_heat_limit": 100.0,
     "radiant_cool_limit": 60.0,
     "supply_dt": 12.0,
     "surface_film_h": 8.0,
     "max_air_surface_dt": 15.0,
+    "tank_enabled": 1.0,
     "tank_temp_hot": 30.0,
     "tank_temp_cold": 10.0,
     "exchanger_approach": 3.0,
     "carnot_efficiency": 0.5,
+    "outdoor_coil_approach": 8.0,
     "pressure_pa": 96500.0
   }
 }
