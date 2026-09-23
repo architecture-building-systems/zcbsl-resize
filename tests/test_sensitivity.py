@@ -131,25 +131,28 @@ def test_fixing_a_parameter_drops_it_from_the_factors(config):
 
 
 def test_the_chambers_heating_case_is_the_sun_off_one(config):
-    """Turning the Sun off costs 12 kW of heating capacity, not zero.
+    """The Artificial Sun is 10.5 kW of gain, and it is always off during a ramp.
 
-    The Artificial Sun is 10.5 kW of gain, so with it on the room barely needs
-    heating -- 2.5 kW of hold load against 13.0 kW without it.  The design
-    capacity carries the ramp on top of the hold, so the Sun-off case is the
-    larger machine: 42.9 kW against 30.8 kW.  Whichever scenario the heating
-    screen runs against is therefore a sizing decision, not a presentation one.
+    So the ramp mode -- which is what sets the chamber's heating size -- is the
+    Sun-off case whatever the operating scenario says, and switching the Sun
+    on for an experiment moves only the operating column: heating hold down by
+    the full gain, cooling hold up by it.  Before 2026-09-23 the ramp credited
+    the Sun against heating, and this test had to pin a scenario choice to get
+    the heating size right; now the model gets it right by construction.
     """
-    from zcbsl_resize import compute
+    from zcbsl_resize import compute, rooms
 
     chamber = config.rooms["climate_chamber"]
-    on = compute(chamber.nominal().replace(equipment_w_per_m2=291.6667))
+    sun_w_per_m2 = rooms.ARTIFICIAL_SUN_W / (10.5 * 6.9)
+    on = compute(chamber.nominal().replace(equipment_w_per_m2=sun_w_per_m2))
     off = compute(chamber.nominal().replace(equipment_w_per_m2=0.0))
 
-    assert float(on["heating_hold"]) < 3_000.0
-    assert float(off["heating_hold"]) > 12_000.0
-    assert float(off["heating_design"]) > float(on["heating_design"]) + 10_000.0
-    # And the reverse for cooling, which is why each duty needs its own scenario.
-    assert float(on["cooling_design"]) > float(off["cooling_design"])
+    assert float(on["heating_ramp"]) == pytest.approx(float(off["heating_ramp"]))
+    assert float(off["heating_hold"]) - float(on["heating_hold"]) == pytest.approx(rooms.ARTIFICIAL_SUN_W, rel=1e-3)
+    assert float(on["cooling_hold"]) - float(off["cooling_hold"]) == pytest.approx(rooms.ARTIFICIAL_SUN_W, rel=1e-3)
+    # With the ramp governing heating, the Sun cannot shrink the heating machine.
+    assert bool(on["heating_set_by_ramp"])
+    assert float(on["heating_design"]) == pytest.approx(float(off["heating_design"]))
 
 
 def test_an_unknown_fixed_parameter_is_rejected(module_room):

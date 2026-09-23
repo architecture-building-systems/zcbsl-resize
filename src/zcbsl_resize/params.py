@@ -61,9 +61,10 @@ SECTIONS: list[dict[str, str]] = [
     {
         "key": "plant",
         "title": "Dedicated heat pump",
-        "blurb": "Each room gets its own machine, drawing on the hot and cold tanks. "
-                 "The tanks are held at temperature by the network, so they are treated as an "
-                 "unlimited source rather than a store.",
+        "blurb": "Each room gets its own machine. With the tanks on it draws on the hot and cold "
+                 "tanks, held at temperature by the network and so treated as an unlimited source "
+                 "rather than a store. With them off it works against outdoor air at the design "
+                 "temperatures.",
     },
     {"key": "site", "title": "Site", "blurb": "Ambient conditions that shift the psychrometrics."},
 ]
@@ -82,6 +83,8 @@ class Param:
     step: float = 0.1
     decimals: int = 1
     hint: str = ""
+    #: "slider" for a continuous input, "toggle" for an on/off switch stored as 0.0 / 1.0.
+    kind: str = "slider"
 
     def clamp(self, value: float) -> float:
         return min(max(float(value), self.minimum), self.maximum)
@@ -261,10 +264,16 @@ PARAMS: list[Param] = [
     Param("equipment_w_per_m2", "ventilation", "Equipment & lighting", "W/m²", 0.0, 500.0, 5.0, 0,
           "Per square metre of floor. Office-like ≈15 · dense instrumentation ≈50 · "
           "a large lighting or solar-simulator rig can reach several hundred."),
+    Param("ramp_equipment_pct", "ventilation", "Equipment on during ramp", "%", 0.0, 100.0, 5.0, 0,
+          "Share of equipment & lighting still running while the room ramps. Nobody is inside "
+          "during a ramp and the Artificial Sun is off, so the climate chamber uses 0 %; the "
+          "module room keeps its computers and small electronics on."),
 
     # ---- delivery limits ------------------------------------------------
     Param("radiant_fraction", "delivery", "Radiant active area", "%", 0.0, 100.0, 5.0, 0,
-          "Share of floor + roof that is actively radiant."),
+          "Share of floor + roof covered by active radiant panels. The panels hang from the "
+          "ceiling and carry load up to their limit while holding and while ramping; the air "
+          "system carries the rest."),
     Param("radiant_heat_limit", "delivery", "Radiant heating limit", "W/m²", 20.0, 200.0, 5.0, 0,
           "EN 1264 / ISO 11855: ~100 W/m² for floor heating in occupied zones."),
     Param("radiant_cool_limit", "delivery", "Radiant cooling limit", "W/m²", 10.0, 120.0, 5.0, 0,
@@ -279,6 +288,10 @@ PARAMS: list[Param] = [
           "This decides whether a ramp time is physically reachable at all."),
 
     # ---- dedicated heat pump ---------------------------------------------
+    Param("tank_enabled", "plant", "Draw on the tanks", "", 0.0, 1.0, 1.0, 0,
+          "On: the machine exchanges with the hot and cold tanks. Off: it works against outdoor "
+          "air at the winter and summer design temperatures, and the tanks see nothing.",
+          kind="toggle"),
     Param("tank_temp_hot", "plant", "Hot tank temperature", "\u00b0C", 5.0, 60.0, 0.5, 1,
           "The warm expansion tank, held at temperature by the 70 kW interface heat pump on the "
           "anergy network. Source for the heating duty."),
@@ -287,7 +300,10 @@ PARAMS: list[Param] = [
           "when the required supply temperature is above it."),
     Param("exchanger_approach", "plant", "Heat exchanger approach", "K", 0.5, 10.0, 0.5, 1,
           "Temperature difference the exchangers give away at each end. Applied on both sides, "
-          "so it costs twice this much of lift."),
+          "so it costs twice this much of lift. With the tanks off it applies on the room side only."),
+    Param("outdoor_coil_approach", "plant", "Outdoor coil approach", "K", 2.0, 20.0, 0.5, 1,
+          "Temperature difference given away across the outdoor air coil. Used only with the "
+          "tanks off; an air coil needs far more than a water-to-water exchanger."),
     Param("carnot_efficiency", "plant", "Fraction of Carnot", "", 0.2, 0.8, 0.01, 2,
           "How close the machine gets to the theoretical limit. Good heat pumps over a small lift "
           "reach 0.45-0.55. This is an estimate, not a manufacturer curve."),
@@ -383,9 +399,10 @@ class ChamberParams:
     sensible_per_person: float = 75.0
     latent_per_person: float = 45.0
     equipment_w_per_m2: float = 25.0
+    ramp_equipment_pct: float = 100.0
 
     # delivery limits
-    radiant_fraction: float = 60.0
+    radiant_fraction: float = 20.0
     radiant_heat_limit: float = 100.0
     radiant_cool_limit: float = 60.0
     supply_dt: float = 12.0
@@ -393,10 +410,12 @@ class ChamberParams:
     max_air_surface_dt: float = 15.0
 
     # dedicated heat pump
+    tank_enabled: float = 1.0
     tank_temp_hot: float = 30.0
     tank_temp_cold: float = 10.0
     exchanger_approach: float = 3.0
     carnot_efficiency: float = 0.50
+    outdoor_coil_approach: float = 8.0
 
     # site
     pressure_pa: float = 96500.0
@@ -534,6 +553,7 @@ def schema() -> dict[str, Any]:
                 "key": p.key, "section": p.section, "label": p.label, "unit": p.unit,
                 "min": p.minimum, "max": p.maximum, "step": p.step,
                 "decimals": p.decimals, "hint": p.hint, "default": defaults[p.key],
+                "kind": p.kind,
             }
             for p in PARAMS
         ],

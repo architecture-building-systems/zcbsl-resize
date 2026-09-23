@@ -12,7 +12,15 @@ and cold tanks it draws on are held at temperature by the interface heat pump on
 the anergy network, so they are an unlimited *source*, not a store.  Nothing
 absorbs the ramp surge on its way to the room, which means the room's own
 machine has to carry the full design capacity, not a buffer-relieved fraction
-of it.
+of it.  With the tanks switched off (``tank_enabled = 0``) the machine works
+against outdoor air instead.
+
+Design capacity is the larger of two modes, never their sum.  **Operating**
+is the steady hold during an experiment.  **Ramp** is the mass-charging power
+plus the hold at the far end of the ramp, evaluated in ramp conditions: the
+same extreme boundary, but nobody inside and the Artificial Sun off.  Hung
+radiant panels carry load up to their limit in both modes; the air system
+carries the rest, and the supply airflow is sized on that remainder.
 
 And a fourth, which the original workshop tool missed entirely: heat only
 enters the thermal mass through a surface film of roughly 8 W/m^2K.  That puts
@@ -114,6 +122,12 @@ def compute(
     # -- internal gains ---------------------------------------------------
     equipment_w = np.asarray(p["equipment_w_per_m2"], dtype=float) * floor_area
     internal_sensible = np.asarray(p["occupants"], dtype=float) * p["sensible_per_person"] + equipment_w
+    # During a ramp nobody is in the room and the Artificial Sun is off.  What
+    # stays on is the share of equipment the room keeps running (computers,
+    # small electronics): ramp_equipment_pct of it, and no occupants.
+    ramp_internal_sensible = equipment_w * np.clip(
+        np.asarray(p["ramp_equipment_pct"], dtype=float), 0.0, 100.0
+    ) / 100.0
 
     # -- envelope, surface by surface -------------------------------------
     # Each surface faces a temperature blended by its exposure: 1 is outdoors,
@@ -161,23 +175,43 @@ def compute(
         per_surface[f"cool_{surface.key}"] = cool
         per_surface[f"solar_{surface.key}"] = solar
 
-    # -- steady-state hold loads ------------------------------------------
+    # -- operating mode: steady-state hold ------------------------------
     vent_sensible_heat = m_dot_vent * CP_AIR * (t_max - p["vent_supply_temp"])
     heating_hold = np.maximum(envelope_heat + vent_sensible_heat - internal_sensible, 0.0)
 
     vent_sensible_cool = m_dot_vent * CP_AIR * (p["vent_supply_temp"] - t_min)
     cooling_hold = np.maximum(envelope_cool + vent_sensible_cool + internal_sensible, 0.0)
 
-    # -- ramp -------------------------------------------------------------
+    # -- ramp mode ----------------------------------------------------------
     # For a lumped capacity under a linear ramp, C dT/dt = P - UA(T - T_ext),
     # so the peak demand is the mass-charging term plus the steady load at the
     # far end of the ramp.  Exact for the lumped model; see tests.
+    #
+    # The far-end load is evaluated at the same extreme boundary as the
+    # operating mode (the weather does not wait for the ramp to finish, and
+    # real sun through glazing still counts), but with the room in ramp
+    # conditions: nobody inside, the Artificial Sun off, and only
+    # ramp_equipment_pct of the equipment running.
+    heating_hold_ramp = np.maximum(envelope_heat + vent_sensible_heat - ramp_internal_sensible, 0.0)
+    cooling_hold_ramp = np.maximum(envelope_cool + vent_sensible_cool + ramp_internal_sensible, 0.0)
+
     energy_mass = c_total * ramp_delta_t  # J
     power_mass = energy_mass / ramp_s  # W
 
+    # -- design: the larger of the two modes, never their sum ---------------
+    # A room is either holding an experiment or ramping between two; it is
+    # never doing both.  The ramp column already carries the hold at its own
+    # far end, so adding the operating hold on top would count it twice.
     margin_frac = np.asarray(p["margin_pct"], dtype=float) / 100.0
-    heating_design = (heating_hold + power_mass) * (1.0 + margin_frac)
-    cooling_design = (cooling_hold + power_mass) * (1.0 + margin_frac)
+    heating_operating = heating_hold * (1.0 + margin_frac)
+    cooling_operating = cooling_hold * (1.0 + margin_frac)
+    heating_ramp = (heating_hold_ramp + power_mass) * (1.0 + margin_frac)
+    cooling_ramp = (cooling_hold_ramp + power_mass) * (1.0 + margin_frac)
+
+    heating_design = np.maximum(heating_operating, heating_ramp)
+    cooling_design = np.maximum(cooling_operating, cooling_ramp)
+    heating_set_by_ramp = heating_ramp > heating_operating
+    cooling_set_by_ramp = cooling_ramp > cooling_operating
 
     # -- surface film limit on mass charging ------------------------------
     # Whatever the coil can produce, the heat still has to cross the air-to-
@@ -204,56 +238,99 @@ def compute(
     latent_design = latent_hold * (1.0 + margin_frac)
     dew_point_c = psychro.dew_point(t_min, p["target_rh"], p["pressure_pa"])
 
-    # -- supply airflow ---------------------------------------------------
-    flow_from_heating = heating_design / (RHO_AIR * CP_AIR * np.maximum(p["supply_dt"], 1e-6))
-    flow_from_cooling = cooling_design / (RHO_AIR * CP_AIR * np.maximum(p["supply_dt"], 1e-6))
-    flow_from_capacity = np.maximum(flow_from_heating, flow_from_cooling)
-    flow_from_ach = np.asarray(p["ach"], dtype=float) * volume / 3600.0
-    design_flow = np.maximum(flow_from_capacity, flow_from_ach)
-    flow_set_by_ventilation = flow_from_ach > flow_from_capacity
-
-    # -- radiant check (steady-state hold only) ---------------------------
-    # Floor plus roof are the radiant surfaces.
-    radiant_area = np.maximum(
+    # -- radiant panels -------------------------------------------------
+    # Hung ceiling panels.  They carry load up to their flux limit in both
+    # modes -- holding and ramping -- and the air system carries the rest.
+    # Hanging clear of the structure, they do not charge the mass directly, so
+    # the surface-film limit above is unchanged by them.  radiant_fraction is
+    # a share of floor + roof area, as it always has been.
+    radiant_area_actual = np.maximum(
         (surface_area["floor"] + surface_area["roof"])
         * np.asarray(p["radiant_fraction"], dtype=float) / 100.0,
-        0.1,
+        0.0,
     )
+    radiant_capacity_heat = np.asarray(p["radiant_heat_limit"], dtype=float) * radiant_area_actual
+    radiant_capacity_cool = np.asarray(p["radiant_cool_limit"], dtype=float) * radiant_area_actual
+
+    radiant_heating_operating = np.minimum(heating_operating, radiant_capacity_heat)
+    radiant_heating_ramp = np.minimum(heating_ramp, radiant_capacity_heat)
+    radiant_cooling_operating = np.minimum(cooling_operating, radiant_capacity_cool)
+    radiant_cooling_ramp = np.minimum(cooling_ramp, radiant_capacity_cool)
+
+    air_heating_operating = heating_operating - radiant_heating_operating
+    air_heating_ramp = heating_ramp - radiant_heating_ramp
+    air_cooling_operating = cooling_operating - radiant_cooling_operating
+    air_cooling_ramp = cooling_ramp - radiant_cooling_ramp
+
+    radiant_heating_design = np.maximum(radiant_heating_operating, radiant_heating_ramp)
+    radiant_cooling_design = np.maximum(radiant_cooling_operating, radiant_cooling_ramp)
+    air_heating_design = np.maximum(air_heating_operating, air_heating_ramp)
+    air_cooling_design = np.maximum(air_cooling_operating, air_cooling_ramp)
+
+    # Could the panels alone hold the operating load?  Flux of the unmargined
+    # hold over the active area.  Floored so a zero area reads as "no".
+    radiant_area = np.maximum(radiant_area_actual, 0.1)
     radiant_flux_heat = heating_hold / radiant_area
     radiant_flux_cool = cooling_hold / radiant_area
     radiant_heat_ok = radiant_flux_heat <= p["radiant_heat_limit"]
     radiant_cool_ok = radiant_flux_cool <= p["radiant_cool_limit"]
-    air_steady_heating = np.maximum(heating_hold - np.asarray(p["radiant_heat_limit"], dtype=float) * radiant_area, 0.0)
-    air_steady_cooling = np.maximum(cooling_hold - np.asarray(p["radiant_cool_limit"], dtype=float) * radiant_area, 0.0)
+    air_steady_heating = np.maximum(heating_hold - radiant_capacity_heat, 0.0)
+    air_steady_cooling = np.maximum(cooling_hold - radiant_capacity_cool, 0.0)
+
+    # -- supply airflow ---------------------------------------------------
+    # Sized on the air side only, mode by mode.  Ventilation runs in both
+    # modes, so the air-change minimum floors each.
+    rho_cp_dt = RHO_AIR * CP_AIR * np.maximum(p["supply_dt"], 1e-6)
+    flow_heating_operating = air_heating_operating / rho_cp_dt
+    flow_cooling_operating = air_cooling_operating / rho_cp_dt
+    flow_heating_ramp = air_heating_ramp / rho_cp_dt
+    flow_cooling_ramp = air_cooling_ramp / rho_cp_dt
+    flow_from_ach = np.asarray(p["ach"], dtype=float) * volume / 3600.0
+
+    flow_operating = np.maximum(np.maximum(flow_heating_operating, flow_cooling_operating), flow_from_ach)
+    flow_ramp = np.maximum(np.maximum(flow_heating_ramp, flow_cooling_ramp), flow_from_ach)
+
+    flow_from_heating = np.maximum(flow_heating_operating, flow_heating_ramp)
+    flow_from_cooling = np.maximum(flow_cooling_operating, flow_cooling_ramp)
+    flow_from_capacity = np.maximum(flow_from_heating, flow_from_cooling)
+    design_flow = np.maximum(flow_from_capacity, flow_from_ach)
+    flow_set_by_ventilation = flow_from_ach > flow_from_capacity
+    flow_set_by_ramp = (~flow_set_by_ventilation) & (flow_ramp > flow_operating)
 
     # -- dedicated heat pump ----------------------------------------------
-    # Each room has its own machine.  The hot and cold tanks are held at
-    # temperature by the interface heat pump on the anergy network, so they are
-    # an unlimited source rather than a store: nothing absorbs the ramp surge,
-    # and the room's machine carries the full design capacity.
+    # Each room has its own machine.  With the tanks on, it exchanges with the
+    # hot and cold tanks, which the interface heat pump on the anergy network
+    # holds at temperature: an unlimited source rather than a store, so
+    # nothing absorbs the ramp surge and the machine carries the full design
+    # capacity.  With the tanks off it works against outdoor air at the design
+    # temperatures instead -- winter for heating, summer for cooling -- across
+    # an outdoor coil with its own, larger approach.
     #
-    # Each duty exchanges with the tank on its own side: heating lifts from the
-    # hot tank up to the supply temperature, cooling lifts from the supply
-    # temperature up to the cold tank.  If the return actually goes to the warm
-    # side instead, set tank_temp_cold to the hot tank's value and watch the
-    # cooling COP fall.
-    approach = np.asarray(p["exchanger_approach"], dtype=float)
+    # Heating lifts from the source up to the supply temperature; cooling
+    # lifts from the supply temperature up to the sink.  If the cooling return
+    # actually goes to the warm tank, set tank_temp_cold to the hot tank's
+    # value and watch the cooling COP fall.
+    tank_on = np.asarray(p["tank_enabled"], dtype=float) >= 0.5
+    approach = np.asarray(p["exchanger_approach"], dtype=float)  # room side
+    source_approach = np.where(tank_on, approach, np.asarray(p["outdoor_coil_approach"], dtype=float))
+    source_temp_heating = np.where(tank_on, np.asarray(p["tank_temp_hot"], dtype=float), t_winter)
+    sink_temp_cooling = np.where(tank_on, np.asarray(p["tank_temp_cold"], dtype=float), t_summer)
     eta = np.asarray(p["carnot_efficiency"], dtype=float)
 
     supply_temp_heating = t_max + np.asarray(p["supply_dt"], dtype=float)
     supply_temp_cooling = t_min - np.asarray(p["supply_dt"], dtype=float)
 
-    # Free exchange: no compressor needed when the tank is already past the
+    # Free exchange: no compressor needed when the source is already past the
     # temperature the coil has to reach.
-    free_heating = supply_temp_heating <= (np.asarray(p["tank_temp_hot"], dtype=float) - approach)
-    free_cooling = supply_temp_cooling >= (np.asarray(p["tank_temp_cold"], dtype=float) + approach)
+    free_heating = supply_temp_heating <= (source_temp_heating - source_approach)
+    free_cooling = supply_temp_cooling >= (sink_temp_cooling + source_approach)
 
-    # Lift across the compressor, with the approach paid at both ends.
+    # Lift across the compressor, with an approach paid at each end.
     lift_heating = np.maximum(
-        (supply_temp_heating + approach) - (np.asarray(p["tank_temp_hot"], dtype=float) - approach), 0.0
+        (supply_temp_heating + approach) - (source_temp_heating - source_approach), 0.0
     )
     lift_cooling = np.maximum(
-        (np.asarray(p["tank_temp_cold"], dtype=float) + approach) - (supply_temp_cooling - approach), 0.0
+        (sink_temp_cooling + source_approach) - (supply_temp_cooling - approach), 0.0
     )
 
     # Carnot, times an efficiency factor. Guard the zero-lift limit.
@@ -266,15 +343,36 @@ def compute(
     # figure is meaningless; read free_heating / free_cooling alongside it.
     # The lift is clamped rather than divided by zero, so these stay finite and
     # a DataFrame of them stays plottable.
+    #
+    # The COP depends only on temperatures, not on the mode, so every electric
+    # and source figure below splits by mode in exact proportion.
+    def _electric_heating(q):
+        return np.where(free_heating, 0.0, q / np.maximum(cop_heating, 1e-9))
+
+    def _electric_cooling(q):
+        return np.where(free_cooling, 0.0, q / np.maximum(cop_cooling, 1e-9))
 
     hp_heating = heating_design
     hp_cooling = cooling_design
-    electric_heating = np.where(free_heating, 0.0, hp_heating / np.maximum(cop_heating, 1e-9))
-    electric_cooling = np.where(free_cooling, 0.0, hp_cooling / np.maximum(cop_cooling, 1e-9))
+    electric_heating = _electric_heating(hp_heating)
+    electric_cooling = _electric_cooling(hp_cooling)
+    electric_heating_operating = _electric_heating(heating_operating)
+    electric_heating_ramp = _electric_heating(heating_ramp)
+    electric_cooling_operating = _electric_cooling(cooling_operating)
+    electric_cooling_ramp = _electric_cooling(cooling_ramp)
 
-    # What the tanks and the network see.
-    tank_extract_heating = hp_heating - electric_heating   # drawn out of the hot tank
-    tank_reject_cooling = hp_cooling + electric_cooling    # pushed into the cold tank
+    # What the source sees: heating extracts thermal minus compressor work,
+    # cooling rejects thermal plus compressor work.
+    source_extract_heating = hp_heating - electric_heating
+    source_reject_cooling = hp_cooling + electric_cooling
+    source_extract_heating_operating = heating_operating - electric_heating_operating
+    source_extract_heating_ramp = heating_ramp - electric_heating_ramp
+    source_reject_cooling_operating = cooling_operating + electric_cooling_operating
+    source_reject_cooling_ramp = cooling_ramp + electric_cooling_ramp
+
+    # The tanks and the network only see it when the tanks are in use.
+    tank_extract_heating = np.where(tank_on, source_extract_heating, 0.0)
+    tank_reject_cooling = np.where(tank_on, source_reject_cooling, 0.0)
 
     return {
         # geometry
@@ -300,9 +398,13 @@ def compute(
         "energy_mass_j": energy_mass,
         "energy_mass_kwh": energy_mass / 3.6e6,
         "power_mass": power_mass,
-        # steady state
+        # steady state, operating mode
         "heating_hold": heating_hold,
         "cooling_hold": cooling_hold,
+        # steady state at the far end of a ramp (Sun off, nobody in)
+        "heating_hold_ramp": heating_hold_ramp,
+        "cooling_hold_ramp": cooling_hold_ramp,
+        "ramp_internal_sensible": ramp_internal_sensible,
         "envelope_heat": envelope_heat,
         "envelope_cool": envelope_cool,
         "vent_sensible_heat": vent_sensible_heat,
@@ -311,10 +413,16 @@ def compute(
         **per_surface,
         "internal_sensible": internal_sensible,
         "equipment_w": equipment_w,
-        # design
+        # design: operating and ramp, each with margin, and the larger of the two
         "margin_frac": margin_frac,
+        "heating_operating": heating_operating,
+        "cooling_operating": cooling_operating,
+        "heating_ramp": heating_ramp,
+        "cooling_ramp": cooling_ramp,
         "heating_design": heating_design,
         "cooling_design": cooling_design,
+        "heating_set_by_ramp": heating_set_by_ramp,
+        "cooling_set_by_ramp": cooling_set_by_ramp,
         # film limit
         "exchange_area": exchange_area,
         "required_air_surface_dt": required_air_surface_dt,
@@ -329,14 +437,36 @@ def compute(
         "latent_hold": latent_hold,
         "latent_design": latent_design,
         "dew_point_c": dew_point_c,
-        # airflow
+        # airflow (air side only, radiant already taken off)
         "design_flow_m3s": design_flow,
         "design_flow_ls": design_flow * 1000.0,
         "design_flow_m3h": design_flow * 3600.0,
+        "flow_heating_operating": flow_heating_operating,
+        "flow_cooling_operating": flow_cooling_operating,
+        "flow_heating_ramp": flow_heating_ramp,
+        "flow_cooling_ramp": flow_cooling_ramp,
+        "flow_operating_ls": flow_operating * 1000.0,
+        "flow_ramp_ls": flow_ramp * 1000.0,
         "flow_from_capacity": flow_from_capacity,
         "flow_from_ach": flow_from_ach,
         "flow_set_by_ventilation": flow_set_by_ventilation,
-        # radiant
+        "flow_set_by_ramp": flow_set_by_ramp,
+        # radiant panels and the air-side remainder, by mode
+        "radiant_area_actual": radiant_area_actual,
+        "radiant_capacity_heat": radiant_capacity_heat,
+        "radiant_capacity_cool": radiant_capacity_cool,
+        "radiant_heating_operating": radiant_heating_operating,
+        "radiant_heating_ramp": radiant_heating_ramp,
+        "radiant_cooling_operating": radiant_cooling_operating,
+        "radiant_cooling_ramp": radiant_cooling_ramp,
+        "radiant_heating_design": radiant_heating_design,
+        "radiant_cooling_design": radiant_cooling_design,
+        "air_heating_operating": air_heating_operating,
+        "air_heating_ramp": air_heating_ramp,
+        "air_cooling_operating": air_cooling_operating,
+        "air_cooling_ramp": air_cooling_ramp,
+        "air_heating_design": air_heating_design,
+        "air_cooling_design": air_cooling_design,
         "radiant_area": radiant_area,
         "radiant_flux_heat": radiant_flux_heat,
         "radiant_flux_cool": radiant_flux_cool,
@@ -345,6 +475,9 @@ def compute(
         "air_steady_heating": air_steady_heating,
         "air_steady_cooling": air_steady_cooling,
         # dedicated heat pump
+        "tank_on": tank_on,
+        "source_temp_heating": source_temp_heating,
+        "sink_temp_cooling": sink_temp_cooling,
         "hp_heating": hp_heating,
         "hp_cooling": hp_cooling,
         "supply_temp_heating": supply_temp_heating,
@@ -355,6 +488,16 @@ def compute(
         "cop_cooling": cop_cooling,
         "electric_heating": electric_heating,
         "electric_cooling": electric_cooling,
+        "electric_heating_operating": electric_heating_operating,
+        "electric_heating_ramp": electric_heating_ramp,
+        "electric_cooling_operating": electric_cooling_operating,
+        "electric_cooling_ramp": electric_cooling_ramp,
+        "source_extract_heating": source_extract_heating,
+        "source_reject_cooling": source_reject_cooling,
+        "source_extract_heating_operating": source_extract_heating_operating,
+        "source_extract_heating_ramp": source_extract_heating_ramp,
+        "source_reject_cooling_operating": source_reject_cooling_operating,
+        "source_reject_cooling_ramp": source_reject_cooling_ramp,
         "tank_extract_heating": tank_extract_heating,
         "tank_reject_cooling": tank_reject_cooling,
         "free_heating": free_heating,
@@ -475,6 +618,39 @@ def _fastest_ramp_iterated(
             dtype=float,
         )
     return t
+
+
+# --------------------------------------------------------------------------
+# Where the ramp stops setting the size
+# --------------------------------------------------------------------------
+
+def mode_crossover_minutes(
+    params: ChamberParams | dict[str, Any],
+    duty: str,
+    *,
+    longest: float = 480.0,
+    step: float = 1.0,
+) -> float | None:
+    """The shortest ramp time at which the operating mode, not the ramp, sets
+    the design capacity for ``duty`` ("heating" or "cooling").
+
+    The ramp requirement falls monotonically as the ramp gets longer, the
+    operating requirement does not move, so there is at most one crossing.
+    Returns ``None`` when the ramp governs all the way out to ``longest``
+    minutes -- which is always the case when the hold in ramp conditions
+    alone already exceeds the operating hold, as it does for heating once the
+    Sun is off.  Scalar parameters only; evaluated on a ``step``-minute grid.
+    """
+    if duty not in ("heating", "cooling"):
+        raise ValueError(f"duty must be 'heating' or 'cooling', not {duty!r}")
+    minutes = np.arange(step, longest + step / 2, step)
+    r = compute(params, ramp_minutes=minutes)
+    operating = np.broadcast_to(np.asarray(r[f"{duty}_operating"], dtype=float), minutes.shape)
+    ramp = np.asarray(r[f"{duty}_ramp"], dtype=float)
+    governed = ramp <= operating
+    if not governed.any():
+        return None
+    return float(minutes[int(np.argmax(governed))])
 
 
 RESULT_KEYS: tuple[str, ...] = tuple(compute(ChamberParams()).keys())

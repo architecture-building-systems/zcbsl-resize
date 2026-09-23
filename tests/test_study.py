@@ -16,7 +16,8 @@ CONFIG = Path(__file__).resolve().parents[1] / "study" / "rooms.yaml"
 #: experiment and belongs in that room's block, even where the two rooms start
 #: from the same number.  This list is the agreement; the test is the fence.
 GENUINELY_SHARED = frozenset({
-    "tank_temp_hot", "tank_temp_cold", "exchanger_approach", "carnot_efficiency",
+    "tank_enabled", "tank_temp_hot", "tank_temp_cold", "exchanger_approach", "carnot_efficiency",
+    "outdoor_coil_approach",
     "boundary_temp_winter", "boundary_temp_summer", "boundary_rh", "surrounding_temp",
     "pressure_pa", "surface_film_h", "margin_pct",
 })
@@ -257,8 +258,14 @@ def test_nominal_reproduces_the_sizing_table(config):
         # 12.00), which moves every chamber number here, including heating
         # (bigger room -> bigger ventilation volume and envelope, even before
         # the boundary-temperature question).
-        "module_room": (20.5, 9.4, 16.9, 15.3),
-        "climate_chamber": (330.5, 40.7, 64.1, 16.9),
+        #
+        # 2026-09-23: design capacity is now the larger of the operating and
+        # ramp modes, not hold + ramp, and the ramp runs with nobody inside and
+        # the Sun off.  The chamber row also absorbs the 2026-09-21 edits to
+        # rooms.yaml (ACH fixed at 1.0, added-mass coverage 0-10 %, so the
+        # nominal is 0 % coverage).
+        "module_room": (20.5, 9.6, 16.7, 15.3),
+        "climate_chamber": (330.5, 48.6, 49.4, 16.9),
     }
     for key, (ua, heat_kw, cool_kw, t_star) in expected.items():
         params = config.rooms[key].nominal()

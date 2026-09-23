@@ -16,9 +16,16 @@ Scoped at a workshop on 2026-09-17.
 
 ## What the model covers
 
-- Room-level supply air: ramp plus baseline ventilation.
-- Radiant system: steady-state check only. Radiant is not sized for the ramp.
-- Per-room dedicated plant capacity, with buffer storage reducing it.
+- Two modes, sized separately: **operating** (holding an experiment) and
+  **ramp** (moving between setpoints). Design capacity is the larger of the
+  two, never their sum. Decided 2026-09-23.
+- Room-level supply air, sized per mode on what the radiant panels cannot
+  carry, floored by baseline ventilation.
+- Radiant system: hung ceiling panels, 20 % of floor + ceiling area, carrying
+  load up to their limit in both modes. Decided 2026-09-23 (previously a
+  steady-state check only).
+- Per-room dedicated heat pump carrying the full design capacity, drawing on
+  the tanks, or on outdoor air with the tanks switched off.
 - Latent load and dehumidification.
 - The physical ceiling on mass-charging rate imposed by the surface film.
 
@@ -50,9 +57,19 @@ Worth confirming what is actually above it.
 
 ## Modelling assumptions
 
+- **Operating and ramp never happen at once.** Design capacity is the larger
+  of the two modes, each with its margin.
 - **Linear ramp.** Peak instantaneous power is evaluated at the target
   setpoint, the worst instant against the boundary. Exact for a lumped
   capacity; see `validation.md`.
+- **Ramp conditions.** During a ramp the boundary stays at the extreme design
+  condition (including real sun through glazing), but nobody is inside and the
+  Artificial Sun is off. Only `ramp_equipment_pct` of the equipment runs: 0 %
+  for the climate chamber, 100 % for the module room, whose computers and
+  small electronics stay on.
+- **Hung radiant panels** carry up to their W/m² limit in either mode. They
+  hang clear of the structure, so they do not charge the mass directly and the
+  surface-film limit is unchanged by them.
 - **Diffusion-limited mass.** Only the depth heat reaches within the ramp
   counts, from the closed-form linear-ramp solution for a semi-infinite solid.
   This assumes the surface follows the ramp perfectly, so it overstates
@@ -77,6 +94,10 @@ Worth confirming what is actually above it.
   cold), because the 70 kW interface heat pump on the anergy network holds them
   there. They are not a store, so nothing absorbs the ramp surge and each
   room's machine carries its full design capacity.
+- **The tanks can be switched off** (`tank_enabled = 0`). The machine then
+  works against outdoor air at the winter and summer design temperatures,
+  across an outdoor coil approach of 8 K by default, and the tanks see
+  nothing. No free cooling is possible at summer design conditions.
 - **Each duty exchanges with the tank on its own side**: heating lifts from the
   hot tank to the supply temperature, cooling lifts from the supply temperature
   to the cold tank. If the return actually goes to the warm side, set
@@ -93,13 +114,16 @@ Worth confirming what is actually above it.
 
 ## Two numbers to keep separate at the workshop
 
-The **air-side peak** is unavoidable: the coil and fan have to deliver the full
-ramp requirement to the room, and no buffer tank changes that.
+**Operating** and **ramp** are different questions with different drivers, and
+the design capacity is whichever is larger, not both added. A 20 kW hold and a
+40 kW ramp need a 40 kW room, provided the 40 kW already includes the hold at
+the far end of the ramp in ramp conditions, which it does here. The browser
+tool shows both side by side and the ramp time past which the operating mode
+takes over.
 
-The **heat-pump peak** can be much smaller, because the Pufferspeicher absorbs
-the ramp surge. At defaults the 1000 L / 15 K buffer covers the whole ramp, so
-the heat pump only needs the steady hold plus its own recharge duty — about
-5.4 kW against a 9.8 kW air-side figure.
+(An earlier version of this section described a buffer tank absorbing the
+ramp surge. That is not the arrangement: the tanks are a source, and the room's
+machine carries the full design capacity.)
 
 ## Open items
 
@@ -113,6 +137,7 @@ the heat pump only needs the steady hold plus its own recharge duty — about
   15 K is a placeholder.
 - Agree a ramp time. Below the film limit the question stops being about
   equipment.
-- Radiant cooling exceeds ISO 11855 flux limits at the default solar load, so
-  the air system carries the remainder continuously. Confirm that is
-  acceptable, or reduce the glazing or irradiance.
+- Radiant panels are set at 20 % of floor + ceiling (40 % of the ceiling),
+  although they physically cover closer to 75 % of the ceiling. Confirm the
+  lower figure is deliberate.
+- Latent load is reported separately and is not part of the cooling capacity.

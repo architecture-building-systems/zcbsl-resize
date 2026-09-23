@@ -108,22 +108,30 @@ so holding dT/dt constant at ΔT / t_ramp means
     P(t) = C ΔT / t_ramp + UA (T(t) − T_ext)
 
 which peaks at the far end of the ramp. That is exactly the
-`hold + mass-charge` form the tool reports; it is not an approximation for a
-lumped model.
+`hold + mass-charge` form of the **ramp mode**; it is not an approximation for
+a lumped model. The hold in it is the one at the far setpoint *in ramp
+conditions*: nobody inside, and only `ramp_equipment_pct` of the equipment
+running (the default room keeps all of it, 300 W, and loses its two
+occupants, 150 W). So the ramp hold is 846 + 150 = 996 W.
 
 At defaults: C_total = 39 074 (air) + 927 000 (shell) = 966 074 J/K, so
 
     P_mass = 966 074 × 14 / 1800 = 7 514 W
 
-and the heating design becomes (846 + 7 514) × 1.15 = **9 614 W**.
+and the heating ramp requirement is (996 + 7 514) × 1.15 = **9 786 W**.
+
+The **operating mode** is the hold alone, 846 × 1.15 = 973 W. The design
+capacity is the larger of the two, **9 786 W**, never their sum: the room is
+either holding an experiment or ramping between two.
 
 `tests/test_dynamic_reference.py` rebuilds the chamber as a differential
 equation from the parameters alone, integrates it at 0.5-second steps, and
 confirms:
 
-- the peak of the required-power curve matches `hold + mass-charge` to within
-  0.01%, across ramp times from 10 to 240 minutes and with and without added
-  mass;
+- the peak of the required-power curve, integrated with the ramp-condition
+  gains, matches `ramp hold + mass-charge` to within 0.01%, across ramp times
+  from 10 to 240 minutes and with and without added mass, and with the Sun
+  off as well as on;
 - feeding that power in as a constant reaches setpoint at or before the target
   time;
 - feeding in half of it does not (the control case, so the test above cannot
@@ -227,16 +235,18 @@ plus 90 W of occupant moisture, times the margin: **455 W**.
 
 | Check | Reference | Default case |
 | --- | --- | --- |
-| Radiant heating flux | EN 1264 / ISO 11855, ~100 W/m² in occupied zones | 59 W/m² — within limit |
-| Radiant cooling flux | ISO 11855, ~40–50 W/m² floor, ~90 W/m² chilled ceiling | 135 W/m² — **exceeds**, air must carry the rest |
+| Radiant heating flux | EN 1264 / ISO 11855, ~100 W/m² in occupied zones | 176 W/m² over 4.8 m² — panels full, air carries the rest |
+| Radiant cooling flux | ISO 11855, ~40–50 W/m² floor, ~90 W/m² chilled ceiling | 404 W/m² over 4.8 m² — panels full, air carries the rest |
 | Occupant sensible/latent | ASHRAE Fundamentals, 75/45 W seated light work | used as defaults |
 | Surface film coefficient | ~8 W/m²K combined interior, still air | used as default |
 | Air density and cp | 1.2 kg/m³, 1005 J/kgK | used throughout |
 
-The radiant cooling result is a real finding, not a modelling artefact: solar
-gain through the glazing puts the steady cooling load well beyond what radiant
-surfaces can shed, so the air system carries it continuously on top of its ramp
-duty.
+The flux figures are the operating hold spread over the panels alone, to show
+whether the panels *could* hold an experiment by themselves. They cannot at
+the default 20 % of floor + ceiling (hung ceiling panels, decided
+2026-09-23), and they are not expected to: the panels run at their limit in
+both modes, and the air coil carries the rest. `tests/test_physics.py` checks
+that split and that it never changes the room total.
 
 ## 9. Numerical robustness
 
